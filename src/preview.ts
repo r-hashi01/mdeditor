@@ -36,6 +36,7 @@ hljs.registerLanguage("env", properties);
 let mermaidModule: typeof import("mermaid") | null = null;
 let mermaidReady = false;
 let mermaidId = 0;
+let pendingMermaidTheme = "dark";
 
 async function ensureMermaid(): Promise<void> {
   if (mermaidReady) return;
@@ -43,11 +44,23 @@ async function ensureMermaid(): Promise<void> {
     mermaidModule = await import("mermaid");
     mermaidModule.default.initialize({
       startOnLoad: false,
-      theme: "dark",
+      theme: pendingMermaidTheme as Parameters<typeof mermaidModule.default.initialize>[0]["theme"],
       fontFamily: '"SF Mono", "Fira Code", monospace',
       securityLevel: "strict",
     });
     mermaidReady = true;
+  }
+}
+
+export function setMermaidTheme(theme: string): void {
+  pendingMermaidTheme = theme;
+  if (mermaidModule && mermaidReady) {
+    mermaidModule.default.initialize({
+      startOnLoad: false,
+      theme: theme as Parameters<typeof mermaidModule.default.initialize>[0]["theme"],
+      fontFamily: '"SF Mono", "Fira Code", monospace',
+      securityLevel: "strict",
+    });
   }
 }
 

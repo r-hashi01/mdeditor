@@ -1,0 +1,44 @@
+import type { EditorView } from "codemirror";
+import type { AppSettings } from "./settings";
+import { THEME_PRESETS, getCodemirrorTheme, applyHljsTheme } from "./themes";
+import { setEditorTheme, setEditorFont } from "./editor";
+import { setMermaidTheme } from "./preview";
+
+function applyCssVariables(preset: (typeof THEME_PRESETS)[keyof typeof THEME_PRESETS]): void {
+  const root = document.documentElement;
+  root.style.setProperty("--bg-primary", preset.vars.bgPrimary);
+  root.style.setProperty("--bg-secondary", preset.vars.bgSecondary);
+  root.style.setProperty("--bg-toolbar", preset.vars.bgToolbar);
+  root.style.setProperty("--text-primary", preset.vars.textPrimary);
+  root.style.setProperty("--text-secondary", preset.vars.textSecondary);
+  root.style.setProperty("--accent", preset.vars.accent);
+  root.style.setProperty("--border", preset.vars.border);
+  root.style.setProperty("--preview-bg", preset.vars.previewBg);
+}
+
+function applyFontVariables(settings: AppSettings): void {
+  const root = document.documentElement;
+  root.style.setProperty("--editor-font-family", settings.editorFontFamily);
+  root.style.setProperty("--editor-font-size", settings.editorFontSize + "px");
+  root.style.setProperty("--preview-font-family", settings.previewFontFamily);
+  root.style.setProperty("--preview-font-size", settings.previewFontSize + "px");
+  root.style.setProperty("--preview-line-height", String(settings.previewLineHeight));
+}
+
+export function applySettings(settings: AppSettings, editorView: EditorView): void {
+  const preset = THEME_PRESETS[settings.theme];
+
+  // 1. CSS variables (UI chrome + preview)
+  applyCssVariables(preset);
+  applyFontVariables(settings);
+
+  // 2. CodeMirror theme + font
+  setEditorTheme(editorView, getCodemirrorTheme(preset));
+  setEditorFont(editorView, settings.editorFontFamily, settings.editorFontSize);
+
+  // 3. Highlight.js CSS
+  applyHljsTheme(preset.hljsTheme);
+
+  // 4. Mermaid theme
+  setMermaidTheme(preset.mermaidTheme);
+}

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
 
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
@@ -87,12 +87,53 @@ fn write_file(path: String, content: String, state: State<'_, AllowedPaths>) -> 
     fs::write(&canonical, &content).map_err(|_| "Cannot write file".to_string())
 }
 
+#[tauri::command]
+fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("Cannot resolve config dir: {}", e))?;
+    let settings_path = config_dir.join("settings.json");
+    if settings_path.exists() {
+        fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Cannot read settings: {}", e))
+    } else {
+        Ok("{}".to_string())
+    }
+}
+
+#[tauri::command]
+fn save_settings(app: tauri::AppHandle, settings: String) -> Result<(), String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("Cannot resolve config dir: {}", e))?;
+    fs::create_dir_all(&config_dir)
+        .map_err(|e| format!("Cannot create config dir: {}", e))?;
+    let settings_path = config_dir.join("settings.json");
+    fs::write(&settings_path, &settings)
+        .map_err(|e| format!("Cannot write settings: {}", e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            Ok(())
+        })
         .manage(AllowedPaths(Mutex::new(Vec::new())))
-        .invoke_handler(tauri::generate_handler![read_file, write_file, allow_path])
+        .invoke_handler(tauri::generate_handler![
+            read_file,
+            write_file,
+            allow_path,
+            load_settings,
+            save_settings
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,7 +1,7 @@
 import { EditorView, basicSetup } from "codemirror";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Compartment, type Extension } from "@codemirror/state";
 import { LanguageDescription } from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
@@ -19,10 +19,15 @@ const codeLanguages = [
   LanguageDescription.of({ name: "JSON", load: async () => json() }),
 ];
 
+/* ── Compartments for dynamic reconfiguration ── */
+const themeCompartment = new Compartment();
+const fontCompartment = new Compartment();
+
 export function createEditor(
   container: HTMLElement,
   onChange: (content: string) => void,
   onScroll?: (ratio: number) => void,
+  initialTheme?: Extension,
 ): EditorView {
   const updateListener = EditorView.updateListener.of((update) => {
     if (update.docChanged) {
@@ -37,7 +42,8 @@ export function createEditor(
       extensions: [
         basicSetup,
         markdown({ base: markdownLanguage, codeLanguages }),
-        oneDark,
+        themeCompartment.of(initialTheme ?? oneDark),
+        fontCompartment.of([]),
         updateListener,
         EditorView.lineWrapping,
       ],
@@ -54,6 +60,27 @@ export function createEditor(
   }
 
   return view;
+}
+
+export function setEditorTheme(view: EditorView, themeExtension: Extension): void {
+  view.dispatch({
+    effects: themeCompartment.reconfigure(themeExtension),
+  });
+}
+
+export function setEditorFont(
+  view: EditorView,
+  fontFamily: string,
+  fontSize: number,
+): void {
+  view.dispatch({
+    effects: fontCompartment.reconfigure(
+      EditorView.theme({
+        "&": { fontFamily, fontSize: fontSize + "px" },
+        ".cm-gutters": { fontFamily, fontSize: fontSize + "px" },
+      }),
+    ),
+  });
 }
 
 export function setEditorContent(view: EditorView, content: string): void {

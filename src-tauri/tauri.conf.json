@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "mdeditor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.mdeditor.editor",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -25,8 +25,17 @@
       }
     ]
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/r-hashi01/mdeditor/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUyRTA1OEIxMkVBMDY3NEMKUldSTVo2QXVzVmpnVW9RMjNod3lyUVd1cmtwcG5UblNqaDI1UkI0WVRick84VnFUU2JVNklGVFYK"
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
