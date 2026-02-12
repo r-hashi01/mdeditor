@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mdeditor</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <div id="toolbar">
+    <button id="btn-open" title="Open file (Cmd+O)"></button>
+    <button id="btn-save" title="Save file (Cmd+S)"></button>
+    <span id="filename">Untitled</span>
+  </div>
+  <div id="container">
+    <div id="editor-pane"></div>
+    <div id="divider"></div>
+    <div id="preview-pane"></div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
