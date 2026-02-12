@@ -24,6 +24,7 @@ export async function openFile(): Promise<{
     filters: FILE_FILTERS,
   });
   if (!filePath) return null;
+  await invoke("allow_path", { path: filePath });
   const content = await invoke<string>("read_file", { path: filePath });
   return { path: filePath, content };
 }
@@ -40,6 +41,7 @@ export async function saveFile(
     });
   }
   if (!filePath) return null;
+  await invoke("allow_path", { path: filePath });
   await invoke("write_file", { path: filePath, content });
   return filePath;
 }

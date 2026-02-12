@@ -1,4 +1,5 @@
 import { Marked } from "marked";
+import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import typescript from "highlight.js/lib/languages/typescript";
@@ -31,15 +32,39 @@ hljs.registerLanguage("toml", ini);
 hljs.registerLanguage("properties", properties);
 hljs.registerLanguage("env", properties);
 
+/* ── Mermaid lazy loader ── */
+let mermaidModule: typeof import("mermaid") | null = null;
+let mermaidReady = false;
+let mermaidId = 0;
+
+async function ensureMermaid(): Promise<void> {
+  if (mermaidReady) return;
+  if (!mermaidModule) {
+    mermaidModule = await import("mermaid");
+    mermaidModule.default.initialize({
+      startOnLoad: false,
+      theme: "dark",
+      fontFamily: '"SF Mono", "Fira Code", monospace',
+      securityLevel: "strict",
+    });
+    mermaidReady = true;
+  }
+}
+
 const marked = new Marked({
   renderer: {
     code({ text, lang }: { text: string; lang?: string }) {
+      // Mermaid blocks: render placeholder that will be processed after DOM insertion
+      if (lang === "mermaid") {
+        const id = `mermaid-${mermaidId++}`;
+        return `<div class="mermaid-placeholder" data-mermaid-id="${id}">${escapeHtml(text)}</div>`;
+      }
       const language = lang && hljs.getLanguage(lang) ? lang : "plaintext";
       let highlighted: string;
       try {
         highlighted = hljs.highlight(text, { language }).value;
       } catch {
-        highlighted = text;
+        highlighted = escapeHtml(text);
       }
       return `<pre><code class="hljs language-${language}">${highlighted}</code></pre>`;
     },
@@ -47,6 +72,10 @@ const marked = new Marked({
   gfm: true,
   breaks: false,
 });
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
 const MD_EXTENSIONS = new Set(["md", "markdown"]);
 
@@ -71,6 +100,30 @@ export function isMarkdownFile(filePath: string | null): boolean {
   return MD_EXTENSIONS.has(getExtension(filePath));
 }
 
+async function renderMermaidBlocks(container: HTMLElement): Promise<void> {
+  const placeholders = container.querySelectorAll<HTMLElement>(".mermaid-placeholder");
+  if (placeholders.length === 0) return;
+
+  await ensureMermaid();
+  const mermaid = mermaidModule!.default;
+
+  for (const el of placeholders) {
+    const id = el.dataset.mermaidId || `mermaid-${mermaidId++}`;
+    const source = el.textContent || "";
+    try {
+      const { svg } = await mermaid.render(id, source);
+      el.innerHTML = svg;
+      el.classList.remove("mermaid-placeholder");
+      el.classList.add("mermaid-rendered");
+    } catch {
+      // Show source as code block on parse error
+      el.innerHTML = `<pre class="mermaid-error"><code>${escapeHtml(source)}</code></pre>`;
+      el.classList.remove("mermaid-placeholder");
+      el.classList.add("mermaid-error-container");
+    }
+  }
+}
+
 export function renderPreview(
   container: HTMLElement,
   content: string,
@@ -80,7 +133,15 @@ export function renderPreview(
   const ext = getExtension(filePath ?? null);
 
   if (!filePath || MD_EXTENSIONS.has(ext)) {
-    container.innerHTML = marked.parse(content) as string;
+    const raw = marked.parse(content) as string;
+    // DOMPurify: allow mermaid placeholders through
+    const clean = DOMPurify.sanitize(raw, {
+      ADD_TAGS: ["div"],
+      ADD_ATTR: ["data-mermaid-id"],
+    });
+    container.innerHTML = clean;
+    // Async render mermaid diagrams after DOM insertion
+    renderMermaidBlocks(container);
   } else {
     const lang = EXT_TO_LANG[ext] || "plaintext";
     let highlighted: string;
