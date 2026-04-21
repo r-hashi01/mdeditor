@@ -1,5 +1,6 @@
 import type { AppSettings, ThemePresetId } from "./settings";
 import { THEME_PRESETS, type ThemePreset } from "./themes";
+import { getVersion } from "@tauri-apps/api/app";
 
 interface FontEntry {
   value: string;
@@ -80,6 +81,7 @@ function buildFontOptions(fonts: FontEntry[], currentValue: string): string {
 export function createSettingsModal(
   initialSettings: AppSettings,
   onChange: (settings: AppSettings) => void,
+  onCheckUpdate?: () => void,
 ): SettingsModal {
   let current = { ...initialSettings };
 
@@ -120,6 +122,10 @@ export function createSettingsModal(
             <label>Font Size: <span class="setting-value" id="editor-size-val">${current.editorFontSize}</span>px</label>
             <input type="range" id="setting-editor-size" min="10" max="24" step="1" value="${current.editorFontSize}" />
           </div>
+          <div class="settings-group settings-toggle-group">
+            <label for="setting-line-numbers">Line Numbers</label>
+            <input type="checkbox" id="setting-line-numbers" ${current.showLineNumbers ? "checked" : ""} />
+          </div>
         </div>
 
         <div class="settings-section">
@@ -142,6 +148,18 @@ export function createSettingsModal(
             <label>Line Height: <span class="setting-value" id="line-height-val">${current.previewLineHeight.toFixed(1)}</span></label>
             <input type="range" id="setting-line-height" min="1.2" max="2.2" step="0.1" value="${current.previewLineHeight}" />
           </div>
+          <div class="settings-group settings-toggle-group">
+            <label for="setting-toc">Table of Contents</label>
+            <input type="checkbox" id="setting-toc" ${current.showToc ? "checked" : ""} />
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">About</div>
+          <div class="settings-about">
+            <span class="settings-version" id="settings-version">mdeditor</span>
+            <button id="btn-check-update" class="settings-update-btn">Check for Updates</button>
+          </div>
         </div>
 
       </div>
@@ -149,6 +167,18 @@ export function createSettingsModal(
   `;
 
   document.body.appendChild(overlay);
+
+  // Load version asynchronously
+  getVersion().then((v) => {
+    const versionEl = overlay.querySelector("#settings-version");
+    if (versionEl) versionEl.textContent = `mdeditor v${v}`;
+  });
+
+  // Update check button
+  const updateBtn = overlay.querySelector("#btn-check-update") as HTMLButtonElement;
+  if (updateBtn && onCheckUpdate) {
+    updateBtn.addEventListener("click", () => onCheckUpdate());
+  }
 
   // References
   const themeGrid = overlay.querySelector(".theme-grid") as HTMLElement;
@@ -159,6 +189,8 @@ export function createSettingsModal(
   const lineHeightInput = overlay.querySelector("#setting-line-height") as HTMLInputElement;
   const lineHeightVal = overlay.querySelector("#line-height-val") as HTMLSpanElement;
   const closeBtn = overlay.querySelector("#settings-close") as HTMLButtonElement;
+  const lineNumbersCheckbox = overlay.querySelector("#setting-line-numbers") as HTMLInputElement;
+  const tocCheckbox = overlay.querySelector("#setting-toc") as HTMLInputElement;
 
   const csEditorFont = overlay.querySelector("#cs-editor-font") as HTMLElement;
   const csPreviewFont = overlay.querySelector("#cs-preview-font") as HTMLElement;
@@ -256,6 +288,18 @@ export function createSettingsModal(
     emit();
   });
 
+  // ── Line numbers toggle ──
+  lineNumbersCheckbox.addEventListener("change", () => {
+    current.showLineNumbers = lineNumbersCheckbox.checked;
+    emit();
+  });
+
+  // ── TOC toggle ──
+  tocCheckbox.addEventListener("change", () => {
+    current.showToc = tocCheckbox.checked;
+    emit();
+  });
+
   // ── Close ──
   closeBtn.addEventListener("click", () => {
     overlay.classList.remove("visible");
@@ -307,6 +351,12 @@ export function createSettingsModal(
       lineHeightInput.value = String(settings.previewLineHeight);
       lineHeightVal.textContent = settings.previewLineHeight.toFixed(1);
       updateSliderFill(lineHeightInput);
+
+      // Line numbers
+      lineNumbersCheckbox.checked = settings.showLineNumbers;
+
+      // TOC
+      tocCheckbox.checked = settings.showToc;
     },
   };
 }

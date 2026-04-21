@@ -1,18 +1,30 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 
-export async function checkForUpdates(): Promise<void> {
+/**
+ * @param silent true = background check on launch (silent if no update)
+ *               false = manual check (shows "up to date" message)
+ */
+export async function checkForUpdates(silent = false): Promise<void> {
   try {
     const update = await check();
-    if (!update) return;
+    if (!update) {
+      if (!silent) {
+        await message("You are on the latest version.", {
+          title: "Check for Updates",
+          kind: "info",
+        });
+      }
+      return;
+    }
 
     const yes = await ask(
-      `v${update.version} が利用可能です（現在のバージョンから更新します）\n\n${update.body ?? ""}`,
+      `v${update.version} is available.\n\n${update.body ?? ""}`,
       {
-        title: "アップデートがあります",
-        okLabel: "更新する",
-        cancelLabel: "あとで",
+        title: "Update Available",
+        okLabel: "Update",
+        cancelLabel: "Later",
         kind: "info",
       },
     );
@@ -22,6 +34,18 @@ export async function checkForUpdates(): Promise<void> {
     await relaunch();
   } catch (e) {
     console.warn("Update check failed:", e);
-    // サイレントに失敗（起動を妨げない）
+    if (!silent) {
+      if (import.meta.env.DEV) {
+        await message("Update check is not available in development mode.", {
+          title: "Check for Updates",
+          kind: "info",
+        });
+      } else {
+        await message("Failed to check for updates.", {
+          title: "Error",
+          kind: "error",
+        });
+      }
+    }
   }
 }

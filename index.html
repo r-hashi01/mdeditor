@@ -8,15 +8,38 @@
 </head>
 <body>
   <div id="toolbar">
-    <button id="btn-open" title="Open file (Cmd+O)"></button>
-    <button id="btn-save" title="Save file (Cmd+S)"></button>
-    <button id="btn-settings" title="Appearance settings"></button>
+    <button id="sidebar-edge" data-tooltip="Show sidebar"></button>
+    <button id="btn-open" data-tooltip="Open File (⌘O)"></button>
+    <button id="btn-open-folder" data-tooltip="Open Folder"></button>
+    <button id="btn-save" data-tooltip="Save (⌘S)"></button>
+    <button id="btn-undo" data-tooltip="Undo (⌘Z)"></button>
+    <button id="btn-redo" data-tooltip="Redo (⇧⌘Z)"></button>
+    <button id="btn-table" data-tooltip="Insert Table"></button>
+    <button id="btn-settings" data-tooltip="Settings"></button>
+    <div class="view-mode-group">
+      <button id="btn-view-code" data-tooltip="Code"></button>
+      <button id="btn-view-split" class="active" data-tooltip="Split"></button>
+      <button id="btn-view-preview" data-tooltip="Preview"></button>
+    </div>
     <span id="filename">Untitled</span>
   </div>
+  <div id="tab-bar"></div>
   <div id="container">
+    <div id="welcome" style="display: none;"></div>
+    <div id="sidebar"></div>
+    <div id="sidebar-divider"></div>
     <div id="editor-pane"></div>
     <div id="divider"></div>
     <div id="preview-pane"></div>
+    <div id="ai-divider"></div>
+    <div id="ai-pane"></div>
+  </div>
+  <div id="status-bar">
+    <div class="status-right">
+      <span id="status-cursor">1:1</span>
+      <span id="status-filetype">Markdown</span>
+      <button id="btn-ai-pane" title="AI Pane (⌘J)"></button>
+    </div>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>

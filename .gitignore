@@ -5,3 +5,9 @@ src-tauri/target/
 src-tauri/gen/
 *.dmg
 app-icon.png
+package-lock.json
+*.png
+!src-tauri/icons/*.png
+!docs/*.png
+.playwright-mcp/
+.claude/settings.local.json

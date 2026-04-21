@@ -1,6 +1,9 @@
 [package]
 name = "mdeditor"
-version = "0.3.0"
+# User-facing version is sourced from ../package.json (tauri.conf.json's
+# `version` field references it). This crate-level version is a placeholder
+# that is never displayed.
+version = "0.0.0"
 edition = "2021"
 
 [lib]
@@ -11,12 +14,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-updater = "2"
+base64 = "0.22"
+portable-pty = "0.8"
+tokio = { version = "1", features = ["process", "io-util"] }
 
 [profile.release]
 strip = true

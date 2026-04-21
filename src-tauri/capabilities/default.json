@@ -8,7 +8,13 @@
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",
-    "shell:allow-open",
+    "dialog:allow-ask",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [
+        { "path": ".*\\.(drawio|xlsx|xls|pptx|ppt)$" }
+      ]
+    },
     "updater:default"
   ]
 }

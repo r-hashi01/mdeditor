@@ -1,7 +1,7 @@
 import type { EditorView } from "codemirror";
 import type { AppSettings } from "./settings";
-import { THEME_PRESETS, getCodemirrorTheme, applyHljsTheme } from "./themes";
-import { setEditorTheme, setEditorFont } from "./editor";
+import { THEME_PRESETS, getCodemirrorTheme, applyHljsTheme, getSyntaxColors } from "./themes";
+import { setEditorTheme, setEditorFont, setLineNumbers } from "./editor";
 import { setMermaidTheme } from "./preview";
 
 function applyCssVariables(preset: (typeof THEME_PRESETS)[keyof typeof THEME_PRESETS]): void {
@@ -14,6 +14,19 @@ function applyCssVariables(preset: (typeof THEME_PRESETS)[keyof typeof THEME_PRE
   root.style.setProperty("--accent", preset.vars.accent);
   root.style.setProperty("--border", preset.vars.border);
   root.style.setProperty("--preview-bg", preset.vars.previewBg);
+
+  // Syntax colours for frontmatter / YAML decorations (WebKit workaround)
+  const syn = getSyntaxColors(preset);
+  root.style.setProperty("--syn-meta", syn.meta);
+  root.style.setProperty("--syn-property", syn.property);
+  root.style.setProperty("--syn-comment", syn.comment);
+  root.style.setProperty("--syn-bool", syn.bool);
+  root.style.setProperty("--syn-null", syn.null_);
+  root.style.setProperty("--syn-number", syn.number);
+  root.style.setProperty("--syn-string", syn.string);
+  root.style.setProperty("--syn-keyword", syn.keyword);
+  root.style.setProperty("--syn-tag", syn.tag);
+  root.style.setProperty("--syn-operator", syn.operator);
 }
 
 function applyFontVariables(settings: AppSettings): void {
@@ -41,4 +54,7 @@ export function applySettings(settings: AppSettings, editorView: EditorView): vo
 
   // 4. Mermaid theme
   setMermaidTheme(preset.mermaidTheme);
+
+  // 5. Line numbers
+  setLineNumbers(editorView, settings.showLineNumbers);
 }
