@@ -4,6 +4,8 @@
 // the command fns in `commands.rs`. Path sandbox rules mirror
 // `src-tauri/src/lib.rs` so the allow-list semantics are preserved.
 
+mod acp;
+mod acp_commands;
 mod commands;
 mod dialogs;
 mod events;
@@ -49,6 +51,7 @@ pub enum UserEvent {
 fn dispatch(
     state: &AppState,
     pty_sessions: &pty::PtySessions,
+    acp_ctx: &acp_commands::AcpCtx,
     emitter: &events::EventEmitter,
     cmd: &str,
     args: &serde_json::Value,
@@ -75,6 +78,17 @@ fn dispatch(
         "pty_write" => pty::write(pty_sessions, args),
         "pty_resize" => pty::resize(pty_sessions, args),
         "pty_kill" => pty::kill(pty_sessions, args),
+        "acp_get_adapter" => acp_commands::get_adapter(acp_ctx),
+        "acp_set_adapter" => acp_commands::set_adapter(acp_ctx, args),
+        "acp_initialize" => acp_commands::initialize(acp_ctx, state, emitter),
+        "acp_new_session" => acp_commands::new_session(acp_ctx, state, emitter, args),
+        "acp_prompt" => acp_commands::prompt(acp_ctx, state, emitter, args),
+        "acp_cancel" => acp_commands::cancel(acp_ctx, state, emitter, args),
+        "acp_set_model" => acp_commands::set_model(acp_ctx, state, emitter, args),
+        "acp_set_config" => acp_commands::set_config(acp_ctx, state, emitter, args),
+        "acp_list_sessions" => acp_commands::list_sessions(acp_ctx, state, emitter, args),
+        "acp_resume_session" => acp_commands::resume_session(acp_ctx, state, emitter, args),
+        "acp_shutdown" => acp_commands::shutdown(acp_ctx),
         _ => Err(format!("unknown cmd: {cmd}")),
     }
 }
@@ -157,6 +171,9 @@ fn main() -> wry::Result<()> {
         allowed_dirs: new_list(),
     });
     let pty_sessions = std::sync::Arc::new(pty::PtySessions::new());
+    let acp_ctx = std::sync::Arc::new(acp_commands::AcpCtx::new(
+        env!("CARGO_PKG_VERSION").to_string(),
+    ));
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
@@ -168,6 +185,7 @@ fn main() -> wry::Result<()> {
 
     let state_for_ipc = state.clone();
     let pty_for_ipc = pty_sessions.clone();
+    let acp_for_ipc = acp_ctx.clone();
     let emitter_for_ipc = emitter.clone();
     let webview = WebViewBuilder::new(&window)
         .with_url("asset://localhost/")
@@ -183,6 +201,7 @@ fn main() -> wry::Result<()> {
                     let (ok, result, error) = match dispatch(
                         &state_for_ipc,
                         &pty_for_ipc,
+                        &acp_for_ipc,
                         &emitter_for_ipc,
                         &r.cmd,
                         &r.args,
