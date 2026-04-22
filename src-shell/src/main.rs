@@ -6,6 +6,8 @@
 
 mod commands;
 mod dialogs;
+mod events;
+mod pty;
 mod sandbox;
 
 use std::path::{Path, PathBuf};
@@ -39,11 +41,18 @@ struct IpcResponse {
     error: Option<String>,
 }
 
-enum UserEvent {
+pub enum UserEvent {
     IpcReply(String),
+    Eval(String),
 }
 
-fn dispatch(state: &AppState, cmd: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> {
+fn dispatch(
+    state: &AppState,
+    pty_sessions: &pty::PtySessions,
+    emitter: &events::EventEmitter,
+    cmd: &str,
+    args: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
     match cmd {
         "ping" => Ok(serde_json::json!("pong")),
         "allow_path" => commands::allow_path(state, args),
@@ -62,6 +71,10 @@ fn dispatch(state: &AppState, cmd: &str, args: &serde_json::Value) -> Result<ser
         "dialog_save" => dialogs::save(args),
         "dialog_ask" => dialogs::ask(args),
         "dialog_message" => dialogs::message(args),
+        "pty_spawn" => pty::spawn(pty_sessions, &state.allowed_dirs, emitter, args),
+        "pty_write" => pty::write(pty_sessions, args),
+        "pty_resize" => pty::resize(pty_sessions, args),
+        "pty_kill" => pty::kill(pty_sessions, args),
         _ => Err(format!("unknown cmd: {cmd}")),
     }
 }
@@ -106,9 +119,11 @@ fn mime_for(path: &Path) -> &'static str {
 }
 
 const IPC_INIT: &str = r#"
-window.__shell_ipc = (() => {
+(() => {
   let nextId = 1;
   const pending = new Map();
+  const listeners = new Map();
+
   window.__shell_on_reply = (payload) => {
     try {
       const msg = typeof payload === "string" ? JSON.parse(payload) : payload;
@@ -118,11 +133,21 @@ window.__shell_ipc = (() => {
       if (msg.ok) p.resolve(msg.result); else p.reject(new Error(msg.error || "ipc error"));
     } catch (e) { console.error(e); }
   };
-  return (cmd, args = {}) => new Promise((resolve, reject) => {
+  window.__shell_on_event = (name, payload) => {
+    const set = listeners.get(name);
+    if (!set) return;
+    for (const fn of set) { try { fn(payload); } catch (e) { console.error(e); } }
+  };
+  window.__shell_ipc = (cmd, args = {}) => new Promise((resolve, reject) => {
     const id = nextId++;
     pending.set(id, { resolve, reject });
     window.ipc.postMessage(JSON.stringify({ id, cmd, args }));
   });
+  window.__shell_listen = (name, fn) => {
+    if (!listeners.has(name)) listeners.set(name, new Set());
+    listeners.get(name).add(fn);
+    return () => listeners.get(name)?.delete(fn);
+  };
 })();
 "#;
 
@@ -131,15 +156,19 @@ fn main() -> wry::Result<()> {
         allowed_paths: new_list(),
         allowed_dirs: new_list(),
     });
+    let pty_sessions = std::sync::Arc::new(pty::PtySessions::new());
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
+    let emitter = events::EventEmitter::new(proxy.clone());
     let window = WindowBuilder::new()
         .with_title("mdeditor (shell poc)")
         .build(&event_loop)
         .unwrap();
 
     let state_for_ipc = state.clone();
+    let pty_for_ipc = pty_sessions.clone();
+    let emitter_for_ipc = emitter.clone();
     let webview = WebViewBuilder::new(&window)
         .with_url("asset://localhost/")
         .with_initialization_script(IPC_INIT)
@@ -151,7 +180,13 @@ fn main() -> wry::Result<()> {
             let parsed: Result<IpcRequest, _> = serde_json::from_str(body);
             let response = match parsed {
                 Ok(r) => {
-                    let (ok, result, error) = match dispatch(&state_for_ipc, &r.cmd, &r.args) {
+                    let (ok, result, error) = match dispatch(
+                        &state_for_ipc,
+                        &pty_for_ipc,
+                        &emitter_for_ipc,
+                        &r.cmd,
+                        &r.args,
+                    ) {
                         Ok(v) => (true, Some(v), None),
                         Err(e) => (false, None, Some(e)),
                     };
@@ -177,7 +212,7 @@ fn main() -> wry::Result<()> {
                 event: WindowEvent::CloseRequested,
                 ..
             } => *control_flow = ControlFlow::Exit,
-            Event::UserEvent(UserEvent::IpcReply(js)) => {
+            Event::UserEvent(UserEvent::IpcReply(js)) | Event::UserEvent(UserEvent::Eval(js)) => {
                 let _ = webview.evaluate_script(&js);
             }
             _ => {}
