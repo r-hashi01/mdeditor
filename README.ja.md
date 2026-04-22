@@ -1,12 +1,23 @@
 # mdeditor
 
-[Tauri v2](https://v2.tauri.app/) で構築された高速でネイティブな Markdown エディタ。
-リアルタイムプレビュー、Marp スライド、draw.io 図、サンドボックス化されたファイル
-アクセスモデルを備えた軽量アプリです。
+[![Test](https://github.com/r-hashi01/mdeditor/actions/workflows/test.yml/badge.svg)](https://github.com/r-hashi01/mdeditor/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/r-hashi01/mdeditor?sort=semver)](https://github.com/r-hashi01/mdeditor/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#対応プラットフォーム)
+[Tauri v2](https://v2.tauri.app/) で構築された、高速でネイティブな Markdown エディタ。
 
-[English](README.md)
+- **軽量** — macOS / Windows / Debian 向けインストーラは 4〜5 MB 前後。起動は 1 秒未満。
+- **サンドボックス** — すべてのファイル I/O は Rust 側のホワイトリスト検査を通過。`/etc`, `.ssh`, `.aws` などシステム / シークレット領域はブロック。
+- **AI ネイティブ** — `claude` / `codex` CLI を埋め込み PTY ターミナルで開いているフォルダを cwd として実行。エディタから離れる必要なし。
 
-![mdeditor スクリーンショット](docs/screenshot.png)
+[English](README.md) · [変更履歴](CHANGELOG.md) · [アーキテクチャ](docs/ARCHITECTURE.md) · [セキュリティポリシー](SECURITY.md) · [コントリビュート](CONTRIBUTING.md)
+
+## スクリーンショット
+
+| | |
+|---|---|
+| ![Welcome 画面](docs/screenshots/mdeditor-home.png) | ![エディタとプレビュー](docs/screenshots/mdeditor-editor.png) |
+| ![プレビュー専用](docs/screenshots/mdeditor-preview.png) | ![AI ペイン](docs/screenshots/mdeditor-ai-pane.png) |
 
 ## 特徴
 
@@ -28,7 +39,7 @@
 - **GFM Markdown**（`marked`）+ **DOMPurify** による XSS サニタイズ
 - **Mermaid** 図（flowchart / sequence / ER / Gantt / class / state / pie ほか）
 - **Marp** プレゼン — スライド単位の frontmatter、スコープ付きディレクティブ、`default` / `gaia` / `uncover` 組み込みテーマ、`</style>` エスケープ / `@import` ブロック
-- **draw.io** (`.drawio`) — `mxGraphModel` を外部ランタイム無しで インライン SVG 描画（rect / ellipse / rhombus / edges / text）
+- **draw.io** (`.drawio`) — `mxGraphModel` を外部ランタイム無しでインライン SVG 描画（rect / ellipse / rhombus / edges / text）
 - **CSV / TSV** ビューア — クォート付きフィールド対応
 - **SVG / HTML / PDF / DOCX / 画像** のプレビュー
 - **コードブロック**のシンタックスハイライト（highlight.js）
@@ -37,41 +48,71 @@
 
 - **キーボードショートカット** — `Cmd/Ctrl+O` ファイルを開く、`Cmd/Ctrl+Shift+O` フォルダを開く、`Cmd/Ctrl+S` 保存、`Cmd/Ctrl+W` タブを閉じる、`Cmd/Ctrl+B` ファイルツリーの開閉、`Cmd/Ctrl+J` AI ペインの開閉、`Cmd+1…9` 最近のフォルダを開く
 - **macOS ネイティブメニュー**（About / Check for Updates / Edit / Hide…）
-- **自動アップデータ** — 起動時バックグラウンドチェック、メニュー / 設定から手動確認
+- **自動アップデータ** — 起動時バックグラウンドチェック、メニュー / 設定から手動確認。minisign 署名済みアーティファクトのみ受理
 - **状態の永続化** — 最後のフォルダ、最近のフォルダ、ウィンドウ位置、テーマ、フォント設定
-
-## セキュリティモデル
-
-- ファイルシステムアクセスは Rust 側のホワイトリストで **サンドボックス化**。
-  ネイティブの開く / 保存ダイアログでユーザーが選択したパス、もしくはユーザー
-  が選択したフォルダ配下のパスのみ読み書き可能
-- **システムディレクトリのブロック**: `/etc`, `/var`, `/usr`, `/sys`, `/proc`,
-  `/bin`, `/sbin`, `/boot`、macOS の `/private/*` シンボリックリンクおよび
-  `/Library`。パス中のセンシティブなコンポーネント
-  （`.ssh`, `.gnupg`, `.aws`, `.kube`, `.docker`, `.config/gcloud`, `Keychains`）
-  は大文字小文字を区別せず、canonicalize 後にも検査してシンボリックリンク
-  バイパスを防止
-- **アトミックな書き込み** — 一時ファイル（PID + ナノ秒サフィックス）に書き
-  込んでから rename。クラッシュしても書きかけのファイルが残らない
-- **10 MB の読み書きサイズ上限**（全 IPC コマンド）
-- **CSP** でスクリプトを `'self'` に制限、画像 / フォントは `data:` のみ許可、
-  外部への `connect-src` は Tauri の IPC チャネル以外ブロック
-- **DOMPurify** で全ての Markdown / Marp / CSV HTML 出力をサニタイズしてから DOM へ反映
-- **AI ペインの PTY** は起動できるツール名を `claude` / `codex` のホワイトリスト
-  に固定し、`AllowedDirs` 配下の cwd でしか spawn できない。1 回あたりの書き込み
-  サイズ上限は 1 MiB。なお、起動した CLI 自体はユーザ権限で動くため、
-  通常のターミナルと同じ信頼レベルで扱うこと
 
 ## 対応プラットフォーム
 
-- macOS（Apple Silicon / Intel）
-- Linux（Ubuntu 22.04+、`libwebkit2gtk-4.1` が入っている他ディストロでも動作）
-- Windows
+| OS | インストーラ | サイズ |
+|---|---|---|
+| macOS (Apple Silicon) | `.dmg`, `.app.tar.gz` | 約 4.5 MB |
+| macOS (Intel) | `.dmg`, `.app.tar.gz` | 約 4.7 MB |
+| Windows x64 | `.exe` NSIS / `.msi` | 3.8〜4.7 MB |
+| Debian / Ubuntu (22.04+) | `.deb` | 約 4.6 MB |
+| その他 Linux | `.AppImage`（依存同梱で約 82 MB）, `.rpm` | — |
+
+他のディストロでも `libwebkit2gtk-4.1` が入っていれば動作する見込みです。
 
 ## インストール
 
-`v*` タグごとのビルド済みバイナリは
-[Releases ページ](https://github.com/r-hashi01/mdeditor/releases)で配布しています。
+### ユーザー向け
+
+`v*` タグごとのビルド済みバイナリは [Releases ページ](https://github.com/r-hashi01/mdeditor/releases) で配布しています。ご自身のプラットフォームに合うアーティファクトを選んでください。
+
+#### macOS
+
+本アプリは **notarize されていません**（OSS プロジェクトで有償の Developer 証明書を持っていないため）。初回起動時に Gatekeeper が開くのを拒否するので、右クリック → **開く** → ダイアログで **開く**、または次のコマンドを一度実行してください:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/mdeditor.app
+```
+
+自動アップデートは minisign 署名済みアーティファクトのみ受理します。
+
+#### Linux
+
+`.deb` / `.rpm` はシステム全体にインストール。`.AppImage` はポータブル — `chmod +x` して実行。GTK + WebKit2GTK 4.1 が必要です。
+
+#### Windows
+
+多くのユーザーには `.exe` (NSIS) を推奨。`.msi` は管理された環境向け。
+
+### 開発者向け
+
+ソースから動かす場合は [Bun](https://bun.sh/)、[Rust](https://www.rust-lang.org/tools/install)、およびプラットフォーム固有の [Tauri 前提条件](https://v2.tauri.app/start/prerequisites/) を入れてから、次を実行してください:
+
+```bash
+bun install
+bun run tauri dev
+```
+
+ブラウザ側だけ確認したい場合は `bun run dev` を使えます。
+
+## セキュリティモデル
+
+mdeditor は、悪意のある Markdown / HTML / Marp ドキュメントを開いてもシークレットファイルを読み出せず、ユーザーが選択したフォルダから脱出できないように設計されています。主な防御:
+
+- **パスサンドボックス** — すべての IPC コマンドは、ネイティブの開く / 保存ダイアログで構築されたインメモリのホワイトリストに対してパスを検証します。システムディレクトリ（`/etc`, `/var`, `/usr`, `/sys`, `/Library`）およびパス中のシークレットコンポーネント（`.ssh`, `.gnupg`, `.aws`, `.kube`, `.docker`, `Keychains` ほか）は、canonicalize 後に大文字小文字を区別せず検査し、シンボリックリンクバイパスを防ぎます。
+- **アトミック書き込み**（一時ファイル + rename、PID + ナノ秒サフィックス）— クラッシュしても書きかけのファイルが残らない。
+- **サイズ上限** — 全 IPC コマンドで 10 MB の読み書きシーリング。`File::take` による境界付き読み込みで TOCTOU grow-after-check を防止。
+- **厳格な CSP** — スクリプトは `'self'`、画像 / フォントは `data:` のみ、外部への `connect-src` は Tauri の IPC チャネル以外ブロック。
+- **HTML プレビュー iframe** — 完全サンドボックス（`allow-scripts` 無し）+ `script-src 'none'` CSP。悪意のある `.html` を開いても JS は実行されません。
+- **DOMPurify** がすべての Markdown / Marp / CSV HTML 出力を DOM 反映前にサニタイズ。
+- **AI ペイン（ACP）** — `claude-agent-acp` / `codex-acp` からの `fs/read_text_file` / `fs/write_text_file` 要求は IPC コマンドと同じホワイトリストで検証。シェル `execute` などのツール権限要求はデフォルトで拒否。書き込み先は書き込み後に再 canonicalize してシンボリックリンクエスケープを検出。
+- **PTY アローリスト** — `claude` / `codex` バイナリのみ spawn 可能。信頼済みのインストール先（Homebrew, `/usr/local/bin`, `~/.cargo/bin`, …）からのみ解決し、`$PATH` は参照しません。
+- **署名付き自動更新** — ビルド時に minisign 公開鍵を埋め込み、改ざんされた更新を拒否。
+
+完全な脅威モデルと報告ポリシーは [SECURITY.md](SECURITY.md) を参照してください。
 
 ## 開発
 
@@ -79,8 +120,7 @@
 
 - [Bun](https://bun.sh/)（パッケージマネージャ兼テストランナー）
 - [Rust](https://www.rust-lang.org/tools/install)（stable）
-- プラットフォーム固有の Tauri 前提条件 —
-  [tauri.app のドキュメント](https://v2.tauri.app/start/prerequisites/)
+- プラットフォーム固有の Tauri 前提条件 — [tauri.app のドキュメント](https://v2.tauri.app/start/prerequisites/)
 
 ### よく使うコマンド
 
@@ -101,45 +141,28 @@ bun run test:watch            # Vitest ウォッチモード
 cd src-tauri && cargo test    # Rust ユニットテスト（パス検証 / アトミック書き込み）
 ```
 
-フロントエンドテストは Vitest + happy-dom で、純粋なレンダリング / サニタイズ
-ロジック（Marp, CSV, draw.io, 設定バリデータ, HTML エスケープ）を検証します。
-Rust テストはセキュリティ境界（`validate_path`, `has_blocked_component`,
-`starts_with_any`, `atomic_write`）をカバーしています。
+フロントエンドテストは Vitest + happy-dom で、純粋なレンダリング / サニタイズロジック（Marp, CSV, draw.io, 設定バリデータ, HTML エスケープ）を検証します。Rust テストはセキュリティ境界（`validate_path`, `has_blocked_component`, `starts_with_any`, `atomic_write`）をカバーしています。
 
-## プロジェクト構成
+### プロジェクト構成
 
-```
-src/                 TypeScript フロントエンド
-  main.ts            エントリポイント — エディタ / プレビュー / タブ / ツリーの結線
-  editor.ts          CodeMirror 6 のセットアップ・言語切替
-  preview.ts         Markdown / Marp / CSV / 画像 / PDF / DOCX のレンダリング
-  marp-renderer.ts   Marp 互換スライドレンダラ（@marp-team 依存なし）
-  drawio-renderer.ts .drawio XML → インライン SVG
-  csv-renderer.ts    CSV / TSV → HTML テーブル
-  file-tree.ts       サイドバーのファイルツリー
-  tab-manager.ts     マルチタブの状態管理
-  fileio.ts          ファイル開く / 保存（IPC invoke）
-  folder-io.ts       フォルダ開く / 再オープン（AllowedDirs ホワイトリスト）
-  image-handler.ts   画像の貼り付け / D&D → images/ 配下に保存
-  table-editor.ts    Markdown テーブル挿入ダイアログ
-  settings.ts        永続化設定 + サニタイザ
-  settings-modal.ts  設定 UI
-  themes.ts          CodeMirror + highlight.js テーマプリセット
-  update-checker.ts  手動 / 自動アップデートフロー
-  welcome.ts         ウェルカム画面 / 最近のフォルダ
+Rust / TypeScript の境界、パスサンドボックス、ACP AI ペインパイプラインの解説は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照してください。
 
-  ai-pane.ts         `claude` / `codex` CLI を動かす埋め込み PTY ターミナル（xterm.js）
+## バージョニング
 
-src-tauri/src/lib.rs Rust バックエンド — IPC コマンド / パスホワイトリスト / アトミック書き込み / PTY セッション
-```
+ユーザーに見えるバージョンは **`package.json`** の 1 箇所のみ。`src-tauri/tauri.conf.json` は `"version": "../package.json"` で参照し、Rust レイヤは実行時に `AppHandle::package_info()` 経由で読み込みます。`src-tauri/Cargo.toml` のクレートバージョンはプレースホルダ（`0.0.0`）でどこにも表示されません。
+
+リリースは `package.json` のバージョンを上げて `v<version>` タグを打つだけ — 残りは `release.yml` が処理します。
 
 ## CI
 
-- **`test.yml`** — `main` への push と PR で実行。並列 2 ジョブ
-  （Vitest フロントエンド + `cargo test --lib` Rust）
-- **`release.yml`** — `v*` タグで実行、macOS (aarch64 + x86_64) / Ubuntu /
-  Windows のインストーラをビルドし GitHub Release に公開。
-  サードパーティアクションはすべてコミット SHA で pin 済み
+- **`test.yml`** — `main` への push と PR で実行。並列 2 ジョブ（Vitest フロントエンド + `cargo test --lib` Rust、matrix: Ubuntu + macOS）
+- **`release.yml`** — `v*` タグで実行、macOS (aarch64 + x86_64) / Ubuntu / Windows のインストーラをビルドし GitHub Release に公開。サードパーティアクションはすべてコミット SHA で pin 済み
+
+## ロードマップ
+
+- 新しいファイル種別が増えてもサンドボックス / ACP / PTY 境界を保ち続ける。
+- 大きめのフォルダや複合メディア文書でのプレビュー体験をさらに磨く。
+- 配布物とリリース手順の予測可能性を維持して、公開バイナリを信頼しやすくする。
 
 ## 技術スタック
 
@@ -152,6 +175,12 @@ src-tauri/src/lib.rs Rust バックエンド — IPC コマンド / パスホワ
 | 図表             | mermaid, 独自 draw.io / Marp レンダラ |
 | ドキュメント     | mammoth (DOCX) |
 | パッケージ / テスト | Bun, Vitest (happy-dom), cargo test |
+
+## コントリビュート
+
+Issue / Discussion / PR を歓迎します。セットアップ手順・コミット規約・PR チェックリストは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。参加者は [Code of Conduct](CODE_OF_CONDUCT.md) に同意したものとみなされます。
+
+セキュリティ脆弱性の報告は公開 Issue を開かず、[SECURITY.md](SECURITY.md) の手順に従ってください。
 
 ## ライセンス
 

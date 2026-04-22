@@ -9,5 +9,6 @@ package-lock.json
 *.png
 !src-tauri/icons/*.png
 !docs/*.png
+!docs/screenshots/*.png
 .playwright-mcp/
 .claude/settings.local.json

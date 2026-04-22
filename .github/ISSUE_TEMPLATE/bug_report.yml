@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible bug in mdeditor
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please do **not** use this form to report security vulnerabilities — see [SECURITY.md](https://github.com/r-hashi01/mdeditor/blob/main/SECURITY.md) for the private disclosure process.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened? What did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps to reproduce. If possible, include a sample Markdown / Marp / drawio file.
+      placeholder: |
+        1. Open a folder with ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mdeditor version
+      description: From the About dialog, or the Release you installed.
+      placeholder: e.g. v0.5.2
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows 10 / 11
+        - Linux — Debian / Ubuntu
+        - Linux — other (specify in details)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: |
+        Dev-tools console output, terminal logs from `bun run tauri dev`, or screenshots.
+      render: shell
+  - type: checkboxes
+    id: sanity
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
+        - label: This is not a security vulnerability (if it is, I will email instead — see SECURITY.md).
+          required: true
