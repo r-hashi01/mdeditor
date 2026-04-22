@@ -21,10 +21,12 @@ export default defineConfig({
         : "safari14",
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    cssMinify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
   },
   esbuild: {
     supported: {
       destructuring: true,
     },
+    legalComments: "none",
   },
 });
