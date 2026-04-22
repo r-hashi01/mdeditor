@@ -1,10 +1,11 @@
-// Minimal shell POC: tao window + wry webview + custom IPC bridge.
-// Loads the Vite dist/ directory via an `asset://` custom protocol and
-// exposes a tiny JSON-RPC-style IPC through window.__shell_ipc.
+// Minimal wry + tao shell for mdeditor. No Tauri runtime.
 //
-// Purpose: measure baseline binary size of a Tauri-free shell.
-// Not feature-complete; the real command surface (30+ #[tauri::command]
-// handlers in src-tauri/src/lib.rs) will be ported incrementally.
+// Exposes `window.__shell_ipc(cmd, args)` to the frontend and dispatches to
+// the command fns in `commands.rs`. Path sandbox rules mirror
+// `src-tauri/src/lib.rs` so the allow-list semantics are preserved.
+
+mod commands;
+mod sandbox;
 
 use std::path::{Path, PathBuf};
 
@@ -16,10 +17,14 @@ use tao::{
 };
 use wry::{http::Response, WebViewBuilder};
 
+use commands::AppState;
+use sandbox::new_list;
+
 #[derive(Deserialize)]
 struct IpcRequest {
     id: u64,
     cmd: String,
+    #[serde(default)]
     args: serde_json::Value,
 }
 
@@ -37,18 +42,21 @@ enum UserEvent {
     IpcReply(String),
 }
 
-fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> {
+fn dispatch(state: &AppState, cmd: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> {
     match cmd {
         "ping" => Ok(serde_json::json!("pong")),
-        "read_text_file" => {
-            let path = args
-                .get("path")
-                .and_then(|v| v.as_str())
-                .ok_or("missing path")?;
-            std::fs::read_to_string(path)
-                .map(serde_json::Value::from)
-                .map_err(|e| e.to_string())
-        }
+        "allow_path" => commands::allow_path(state, args),
+        "allow_dir" => commands::allow_dir(state, args),
+        "reopen_dir" => commands::reopen_dir(state, args),
+        "list_directory" => commands::list_directory(state, args),
+        "read_file" => commands::read_file(state, args),
+        "read_file_binary" => commands::read_file_binary(state, args),
+        "write_file" => commands::write_file(state, args),
+        "write_file_binary" => commands::write_file_binary(state, args),
+        "ensure_dir" => commands::ensure_dir(state, args),
+        "get_image_temp_dir" => commands::get_image_temp_dir(state, args),
+        "load_settings" => commands::load_settings(state, args),
+        "save_settings" => commands::save_settings(state, args),
         _ => Err(format!("unknown cmd: {cmd}")),
     }
 }
@@ -114,6 +122,11 @@ window.__shell_ipc = (() => {
 "#;
 
 fn main() -> wry::Result<()> {
+    let state = std::sync::Arc::new(AppState {
+        allowed_paths: new_list(),
+        allowed_dirs: new_list(),
+    });
+
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
     let window = WindowBuilder::new()
@@ -121,6 +134,7 @@ fn main() -> wry::Result<()> {
         .build(&event_loop)
         .unwrap();
 
+    let state_for_ipc = state.clone();
     let webview = WebViewBuilder::new(&window)
         .with_url("asset://localhost/")
         .with_initialization_script(IPC_INIT)
@@ -132,7 +146,7 @@ fn main() -> wry::Result<()> {
             let parsed: Result<IpcRequest, _> = serde_json::from_str(body);
             let response = match parsed {
                 Ok(r) => {
-                    let (ok, result, error) = match dispatch(&r.cmd, &r.args) {
+                    let (ok, result, error) = match dispatch(&state_for_ipc, &r.cmd, &r.args) {
                         Ok(v) => (true, Some(v), None),
                         Err(e) => (false, None, Some(e)),
                     };
