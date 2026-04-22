@@ -52,13 +52,6 @@ let currentPdfBlobUrl: string | null = null;
 /** Track the current HTML preview blob URL so we can revoke it on re-render. */
 let currentHtmlBlobUrl: string | null = null;
 
-/** Check if content has `marp: true` in YAML frontmatter */
-export function isMarpContent(content: string): boolean {
-  const m = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!m) return false;
-  return /^\s*marp\s*:\s*true\s*$/m.test(m[1]);
-}
-
 /** Navigate Marp slides from outside (keyboard shortcut etc.) */
 export function navigateMarpSlide(
   container: HTMLElement,
@@ -276,10 +269,10 @@ function renderMarpContent(
 }
 
 /* ── Mermaid lazy loader ── */
+import { getPendingMermaidTheme, subscribeMermaidTheme, setMermaidTheme as _setMermaidTheme } from "./mermaid-theme-state";
 let mermaidModule: typeof import("mermaid") | null = null;
 let mermaidReady = false;
 let mermaidId = 0;
-let pendingMermaidTheme = "dark";
 
 async function ensureMermaid(): Promise<void> {
   if (mermaidReady) return;
@@ -287,25 +280,25 @@ async function ensureMermaid(): Promise<void> {
     mermaidModule = await import("mermaid");
     mermaidModule.default.initialize({
       startOnLoad: false,
-      theme: pendingMermaidTheme as Parameters<typeof mermaidModule.default.initialize>[0]["theme"],
+      theme: getPendingMermaidTheme() as Parameters<typeof mermaidModule.default.initialize>[0]["theme"],
       fontFamily: '"SF Mono", "Fira Code", monospace',
       securityLevel: "strict",
     });
     mermaidReady = true;
-  }
-}
-
-export function setMermaidTheme(theme: string): void {
-  pendingMermaidTheme = theme;
-  if (mermaidModule && mermaidReady) {
-    mermaidModule.default.initialize({
-      startOnLoad: false,
-      theme: theme as Parameters<typeof mermaidModule.default.initialize>[0]["theme"],
-      fontFamily: '"SF Mono", "Fira Code", monospace',
-      securityLevel: "strict",
+    subscribeMermaidTheme((theme) => {
+      if (mermaidModule && mermaidReady) {
+        mermaidModule.default.initialize({
+          startOnLoad: false,
+          theme: theme as Parameters<typeof mermaidModule.default.initialize>[0]["theme"],
+          fontFamily: '"SF Mono", "Fira Code", monospace',
+          securityLevel: "strict",
+        });
+      }
     });
   }
 }
+
+export const setMermaidTheme = _setMermaidTheme;
 
 /* ── Slug generation (Japanese-aware) ── */
 const slugCounts = new Map<string, number>();
@@ -466,15 +459,29 @@ function annotateTableCells(container: HTMLElement, allLines: string[]): void {
 }
 
 
-const MD_EXTENSIONS = new Set(["md", "markdown"]);
-const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"]);
-const SVG_EXTENSIONS = new Set(["svg"]);
-const DRAWIO_EXTENSIONS = new Set(["drawio"]);
-const CSV_EXTENSIONS = new Set(["csv", "tsv"]);
-const PDF_EXTENSIONS = new Set(["pdf"]);
-const DOCX_EXTENSIONS = new Set(["docx", "doc"]);
-const HTML_EXTENSIONS = new Set(["html", "htm"]);
-const EXTERNAL_ONLY_EXTENSIONS = new Set(["xlsx", "xls", "pptx", "ppt"]);
+import {
+  MD_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  SVG_EXTENSIONS,
+  DRAWIO_EXTENSIONS,
+  CSV_EXTENSIONS,
+  PDF_EXTENSIONS,
+  DOCX_EXTENSIONS,
+  HTML_EXTENSIONS,
+  EXTERNAL_ONLY_EXTENSIONS,
+} from "./preview-predicates";
+export {
+  isMarkdownFile,
+  isImageFile,
+  isSvgFile,
+  isHtmlFile,
+  isDrawioFile,
+  isCsvFile,
+  isPdfFile,
+  isDocxFile,
+  isExternalOnlyFile,
+  isMarpContent,
+} from "./preview-predicates";
 
 /**
  * Extract YAML frontmatter from markdown content.
@@ -510,50 +517,7 @@ const EXT_TO_LANG: Record<string, string> = {
   drawio: "xml",
 };
 
-function getExtension(filePath: string | null): string {
-  if (!filePath) return "md";
-  const name = filePath.split(/[/\\]/).pop() || "";
-  // dotfiles like .env → "env"
-  if (name.startsWith(".") && !name.includes(".", 1)) return name.slice(1);
-  const dot = name.lastIndexOf(".");
-  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
-}
-
-export function isMarkdownFile(filePath: string | null): boolean {
-  return MD_EXTENSIONS.has(getExtension(filePath));
-}
-
-export function isImageFile(filePath: string | null): boolean {
-  return IMAGE_EXTENSIONS.has(getExtension(filePath));
-}
-
-export function isSvgFile(filePath: string | null): boolean {
-  return SVG_EXTENSIONS.has(getExtension(filePath));
-}
-
-export function isHtmlFile(filePath: string | null): boolean {
-  return HTML_EXTENSIONS.has(getExtension(filePath));
-}
-
-export function isDrawioFile(filePath: string | null): boolean {
-  return DRAWIO_EXTENSIONS.has(getExtension(filePath));
-}
-
-export function isCsvFile(filePath: string | null): boolean {
-  return CSV_EXTENSIONS.has(getExtension(filePath));
-}
-
-export function isPdfFile(filePath: string | null): boolean {
-  return PDF_EXTENSIONS.has(getExtension(filePath));
-}
-
-export function isDocxFile(filePath: string | null): boolean {
-  return DOCX_EXTENSIONS.has(getExtension(filePath));
-}
-
-export function isExternalOnlyFile(filePath: string | null): boolean {
-  return EXTERNAL_ONLY_EXTENSIONS.has(getExtension(filePath));
-}
+import { getExtension } from "./preview-predicates";
 
 async function renderMermaidBlocks(container: HTMLElement, token: number): Promise<void> {
   const placeholders = container.querySelectorAll<HTMLElement>(".mermaid-placeholder");

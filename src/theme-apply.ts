@@ -2,7 +2,7 @@ import type { EditorView } from "codemirror";
 import type { AppSettings } from "./settings";
 import { THEME_PRESETS, getCodemirrorTheme, applyHljsTheme, getSyntaxColors } from "./themes";
 import { setEditorTheme, setEditorFont, setLineNumbers } from "./editor";
-import { setMermaidTheme } from "./preview";
+import { setMermaidTheme } from "./mermaid-theme-state";
 
 function applyCssVariables(preset: (typeof THEME_PRESETS)[keyof typeof THEME_PRESETS]): void {
   const root = document.documentElement;

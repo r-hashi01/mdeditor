@@ -1,5 +1,42 @@
 import { createEditor, getEditorContent, createEditorState, reapplyStyle, setEditorLanguage } from "./editor";
-import { renderPreview, isMarpContent, isImageFile, isSvgFile, isHtmlFile, isDrawioFile, isCsvFile, isPdfFile, isDocxFile, isExternalOnlyFile, navigateMarpSlide, resetMarpSlide, setupPreviewEditing } from "./preview";
+import { isMarpContent, isImageFile, isSvgFile, isHtmlFile, isDrawioFile, isCsvFile, isPdfFile, isDocxFile, isExternalOnlyFile } from "./preview-predicates";
+import type { EditorView } from "codemirror";
+
+// Preview renderer is dynamically imported on first use so its heavy deps
+// (marked, highlight.js, DOMPurify, lazy mermaid glue) stay out of the main chunk.
+let _previewMod: typeof import("./preview") | null = null;
+let _previewModPromise: Promise<typeof import("./preview")> | null = null;
+function loadPreviewMod(): Promise<typeof import("./preview")> {
+  if (_previewMod) return Promise.resolve(_previewMod);
+  if (!_previewModPromise) {
+    _previewModPromise = import("./preview").then((m) => {
+      _previewMod = m;
+      return m;
+    });
+  }
+  return _previewModPromise;
+}
+function renderPreview(
+  container: HTMLElement,
+  content: string,
+  filePath: string | null,
+  showToc: boolean,
+): void {
+  void loadPreviewMod().then((m) => m.renderPreview(container, content, filePath, showToc));
+}
+function resetMarpSlide(): void {
+  if (_previewMod) _previewMod.resetMarpSlide();
+}
+function navigateMarpSlide(container: HTMLElement, direction: "prev" | "next"): void {
+  if (_previewMod) _previewMod.navigateMarpSlide(container, direction);
+}
+function setupPreviewEditing(
+  container: HTMLElement,
+  editorView: EditorView,
+  rerender: () => void,
+): void {
+  void loadPreviewMod().then((m) => m.setupPreviewEditing(container, editorView, rerender));
+}
 import { openFile, saveFile } from "./fileio";
 import { loadSettings, saveSettings, type AppSettings } from "./settings";
 import { THEME_PRESETS, getCodemirrorTheme, applyHljsTheme } from "./themes";
@@ -13,7 +50,7 @@ import { setupImageHandlers } from "./image-handler";
 import { createTableEditor } from "./table-editor";
 import { createWelcome, addRecentFolder } from "./welcome";
 import { basename } from "./path-utils";
-import { createAiPane } from "./ai-pane";
+import type { AiPaneController } from "./ai-pane";
 import { undo, redo } from "@codemirror/commands";
 import { listen } from "@tauri-apps/api/event";
 import folderOpenIcon from "lucide-static/icons/folder-open.svg?raw";
@@ -143,12 +180,11 @@ async function init(): Promise<void> {
   // Apply all settings (CSS vars, CM font, mermaid, etc.)
   applySettings(currentSettings, editor);
 
-  // Prefetch heavy preview deps during idle so the first mermaid / docx render
-  // has no perceptible delay. Errors are swallowed — this is best-effort only.
+  // Prefetch mermaid only — it is the heaviest renderer and users hit it often.
+  // mammoth (DOCX) is niche; let preview.ts lazy-load on first .docx open.
   const idle = (window as Window & { requestIdleCallback?: (cb: () => void) => void }).requestIdleCallback
     ?? ((cb: () => void) => setTimeout(cb, 1500));
   idle(() => { void import("mermaid").catch(() => {}); });
-  idle(() => { void import("mammoth").catch(() => {}); });
 
   // ── Status bar ──
   const statusCursor = document.getElementById("status-cursor")!;
@@ -183,16 +219,37 @@ async function init(): Promise<void> {
   const aiPaneBtn = document.getElementById("btn-ai-pane")!;
   let currentFolderPath: string | null = null;
 
-  // ── AI pane (Claude Code / Codex in a PTY) ──
-  const aiPane = createAiPane({
-    pane: document.getElementById("ai-pane")!,
-    divider: document.getElementById("ai-divider")!,
-    initialCwd: null,
-  });
-  aiPaneBtn.addEventListener("click", () => {
-    const visible = aiPane.toggle();
-    aiPaneBtn.classList.toggle("active", visible);
-  });
+  // ── AI pane (Claude Code / Codex in a PTY) — lazy ──
+  // Heavy: pulls @agentclientprotocol/claude-agent-acp + @zed-industries/codex-acp
+  // + marked + highlight.js + DOMPurify. Defer until first toggle / folder set.
+  let _aiPane: AiPaneController | null = null;
+  let _aiPanePromise: Promise<AiPaneController> | null = null;
+  function loadAiPane(): Promise<AiPaneController> {
+    if (_aiPane) return Promise.resolve(_aiPane);
+    if (!_aiPanePromise) {
+      _aiPanePromise = import("./ai-pane").then(({ createAiPane }) => {
+        const p = createAiPane({
+          pane: document.getElementById("ai-pane")!,
+          divider: document.getElementById("ai-divider")!,
+          initialCwd: currentFolderPath,
+        });
+        _aiPane = p;
+        return p;
+      });
+    }
+    return _aiPanePromise;
+  }
+  function aiPaneSetCwd(folder: string): void {
+    if (_aiPane) _aiPane.setCwd(folder);
+    // If not yet loaded, initialCwd will pick up currentFolderPath on first load.
+  }
+  function aiPaneToggle(): void {
+    void loadAiPane().then((p) => {
+      const visible = p.toggle();
+      aiPaneBtn.classList.toggle("active", visible);
+    });
+  }
+  aiPaneBtn.addEventListener("click", aiPaneToggle);
 
   // fileTree is created early but its onFileSelect callback references tabManager.
   // Both are defined inside init(), so by the time the callback actually runs
@@ -448,7 +505,7 @@ async function init(): Promise<void> {
       currentFolderPath = folder;
       await fileTree.openFolder(folder);
       folderBtn.classList.add("active");
-      aiPane.setCwd(folder);
+      aiPaneSetCwd(folder);
       // Persist to recent folders
       currentSettings.recentFolders = addRecentFolder(currentSettings.recentFolders, folder);
       currentSettings.lastOpenedFolder = folder;
@@ -478,7 +535,7 @@ async function init(): Promise<void> {
     currentFolderPath = folder;
     await fileTree.openFolder(folder);
     folderBtn.classList.add("active");
-    aiPane.setCwd(folder);
+    aiPaneSetCwd(folder);
     currentSettings.recentFolders = addRecentFolder(currentSettings.recentFolders, folder);
     currentSettings.lastOpenedFolder = folder;
     debouncedSave(currentSettings);
@@ -579,8 +636,7 @@ async function init(): Promise<void> {
     }
     if (mod && e.key === "j") {
       e.preventDefault();
-      const visible = aiPane.toggle();
-      aiPaneBtn.classList.toggle("active", visible);
+      aiPaneToggle();
     }
     // On welcome screen: Cmd+1-9 opens recent projects
     if (mod && welcomeVisible && e.key >= "1" && e.key <= "9") {

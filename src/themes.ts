@@ -9,34 +9,24 @@ import {
 import { tags } from "@lezer/highlight";
 import type { ThemePresetId } from "./settings";
 
-/* ── Highlight.js CSS (raw imports for dynamic injection) ── */
-import hljsAtomDark from "highlight.js/styles/atom-one-dark.css?raw";
-import hljsAtomLight from "highlight.js/styles/atom-one-light.css?raw";
-import hljsGithubDark from "highlight.js/styles/github-dark.css?raw";
-import hljsGithubLight from "highlight.js/styles/github.css?raw";
-import hljsDracula from "highlight.js/styles/base16/dracula.css?raw";
-import hljsNord from "highlight.js/styles/nord.css?raw";
-import hljsTokyoNight from "highlight.js/styles/tokyo-night-dark.css?raw";
-import hljsTokyoNightLight from "highlight.js/styles/tokyo-night-light.css?raw";
-import hljsRosePine from "highlight.js/styles/rose-pine.css?raw";
-import hljsRosePineDawn from "highlight.js/styles/rose-pine-dawn.css?raw";
-import hljsSolarizedDark from "highlight.js/styles/base16/solarized-dark.css?raw";
-import hljsSolarizedLight from "highlight.js/styles/base16/solarized-light.css?raw";
-
-const HLJS_STYLES: Record<string, string> = {
-  "atom-one-dark": hljsAtomDark,
-  "atom-one-light": hljsAtomLight,
-  "github-dark": hljsGithubDark,
-  github: hljsGithubLight,
-  dracula: hljsDracula,
-  nord: hljsNord,
-  "tokyo-night-dark": hljsTokyoNight,
-  "tokyo-night-light": hljsTokyoNightLight,
-  "rose-pine": hljsRosePine,
-  "rose-pine-dawn": hljsRosePineDawn,
-  "solarized-dark": hljsSolarizedDark,
-  "solarized-light": hljsSolarizedLight,
+/* ── Highlight.js CSS (on-demand loaders; only active theme reaches the wire) ── */
+type CssLoader = () => Promise<{ default: string }>;
+const HLJS_LOADERS: Record<string, CssLoader> = {
+  "atom-one-dark": () => import("highlight.js/styles/atom-one-dark.css?raw"),
+  "atom-one-light": () => import("highlight.js/styles/atom-one-light.css?raw"),
+  "github-dark": () => import("highlight.js/styles/github-dark.css?raw"),
+  github: () => import("highlight.js/styles/github.css?raw"),
+  dracula: () => import("highlight.js/styles/base16/dracula.css?raw"),
+  nord: () => import("highlight.js/styles/nord.css?raw"),
+  "tokyo-night-dark": () => import("highlight.js/styles/tokyo-night-dark.css?raw"),
+  "tokyo-night-light": () => import("highlight.js/styles/tokyo-night-light.css?raw"),
+  "rose-pine": () => import("highlight.js/styles/rose-pine.css?raw"),
+  "rose-pine-dawn": () => import("highlight.js/styles/rose-pine-dawn.css?raw"),
+  "solarized-dark": () => import("highlight.js/styles/base16/solarized-dark.css?raw"),
+  "solarized-light": () => import("highlight.js/styles/base16/solarized-light.css?raw"),
 };
+
+const HLJS_CACHE = new Map<string, string>();
 
 /* ── Theme preset type ── */
 export interface ThemePreset {
@@ -538,5 +528,17 @@ export function applyHljsTheme(themeName: string): void {
     styleEl.id = "hljs-theme";
     document.head.appendChild(styleEl);
   }
-  styleEl.textContent = HLJS_STYLES[themeName] ?? HLJS_STYLES["atom-one-dark"];
+  const target = styleEl;
+  const cached = HLJS_CACHE.get(themeName);
+  if (cached !== undefined) {
+    target.textContent = cached;
+    return;
+  }
+  const loader = HLJS_LOADERS[themeName] ?? HLJS_LOADERS["atom-one-dark"];
+  void loader().then((mod) => {
+    HLJS_CACHE.set(themeName, mod.default);
+    if (document.getElementById("hljs-theme") === target) {
+      target.textContent = mod.default;
+    }
+  }).catch(() => {});
 }
