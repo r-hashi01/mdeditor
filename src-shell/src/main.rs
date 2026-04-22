@@ -5,6 +5,7 @@
 // `src-tauri/src/lib.rs` so the allow-list semantics are preserved.
 
 mod commands;
+mod dialogs;
 mod sandbox;
 
 use std::path::{Path, PathBuf};
@@ -57,6 +58,10 @@ fn dispatch(state: &AppState, cmd: &str, args: &serde_json::Value) -> Result<ser
         "get_image_temp_dir" => commands::get_image_temp_dir(state, args),
         "load_settings" => commands::load_settings(state, args),
         "save_settings" => commands::save_settings(state, args),
+        "dialog_open" => dialogs::open(args),
+        "dialog_save" => dialogs::save(args),
+        "dialog_ask" => dialogs::ask(args),
+        "dialog_message" => dialogs::message(args),
         _ => Err(format!("unknown cmd: {cmd}")),
     }
 }
