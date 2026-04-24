@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/core";
@@ -41,8 +41,6 @@ import { renderMarp } from "./marp-renderer";
 let marpCurrentSlide = 0;
 let marpTotalSlides = 0;
 
-const ZOOM_STEPS = [50, 75, 100, 125, 150, 200];
-let marpZoomIndex = 2; // default 100%
 
 /** Monotonically increasing render token to detect stale async callbacks. */
 let renderToken = 0;
@@ -104,6 +102,25 @@ function updateMarpSlideVisibility(container: HTMLElement): void {
   if (nextBtn) nextBtn.disabled = marpCurrentSlide >= marpTotalSlides - 1;
 }
 
+const ZOOM_STEPS = [50, 75, 100, 125, 150, 200];
+let marpZoomIndex = 2;
+
+const HTML_ZOOM_STEPS = [50, 75, 100, 125, 150, 200];
+let htmlZoomIndex = 2;
+
+function applyHtmlZoom(container: HTMLElement): void {
+  const pct = HTML_ZOOM_STEPS[htmlZoomIndex];
+  const frame = container.querySelector<HTMLElement>(".html-preview-frame");
+  if (frame) {
+    // `zoom` affects both rendering and layout box in WebKit, so the
+    // surrounding scroller's overflow correctly picks up horizontal /
+    // vertical overflow when zooming in.
+    frame.style.zoom = `${pct / 100}`;
+  }
+  const label = container.querySelector(".html-zoom-label");
+  if (label) label.textContent = `${pct}%`;
+}
+
 function applyZoom(container: HTMLElement): void {
   const scale = `${ZOOM_STEPS[marpZoomIndex] / 100}`;
   container.querySelectorAll<HTMLElement>(".marp-slide").forEach((slide) => {
@@ -111,6 +128,26 @@ function applyZoom(container: HTMLElement): void {
   });
   const label = container.querySelector(".marp-zoom-label");
   if (label) label.textContent = `${ZOOM_STEPS[marpZoomIndex]}%`;
+}
+
+const marpResizeObservers = new WeakMap<HTMLElement, ResizeObserver>();
+
+function fitMarpSlides(slideContainer: HTMLElement): void {
+  const padX = 32;
+  const availW = Math.max(0, slideContainer.clientWidth - padX);
+  if (availW === 0) return;
+  slideContainer.querySelectorAll<HTMLElement>(".marp-slide").forEach((slide) => {
+    slide.style.setProperty("--marp-w", `${availW}px`);
+  });
+}
+
+function observeMarpResize(slideContainer: HTMLElement): void {
+  const existing = marpResizeObservers.get(slideContainer);
+  if (existing) existing.disconnect();
+  const ro = new ResizeObserver(() => fitMarpSlides(slideContainer));
+  ro.observe(slideContainer);
+  marpResizeObservers.set(slideContainer, ro);
+  fitMarpSlides(slideContainer);
 }
 
 
@@ -219,7 +256,6 @@ function renderMarpContent(
     `<style class="marp-theme">${css}</style>` +
     `<div class="marp-slide-container">${html}</div>` +
     `<div class="marp-nav-bar">` +
-    // Zoom controls
     `<button class="marp-nav-btn" data-marp-nav="zoom-out" title="Zoom Out">` +
     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg>` +
     `</button>` +
@@ -227,9 +263,7 @@ function renderMarpContent(
     `<button class="marp-nav-btn" data-marp-nav="zoom-in" title="Zoom In">` +
     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>` +
     `</button>` +
-    // Spacer
     `<span class="marp-nav-spacer"></span>` +
-    // Navigation controls
     `<button class="marp-nav-btn" data-marp-nav="prev">` +
     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>` +
     `</button>` +
@@ -241,6 +275,8 @@ function renderMarpContent(
 
   updateMarpSlideVisibility(container);
   applyZoom(container);
+  const slideContainer = container.querySelector<HTMLElement>(".marp-slide-container");
+  if (slideContainer) observeMarpResize(slideContainer);
   resolveLocalImages(container, filePath);
 
   // Post-process: add source-line tracking + editable markers to slide elements
@@ -260,7 +296,6 @@ function renderMarpContent(
       updateMarpSlideVisibility(container);
     }
   });
-  // Zoom handlers
   container.querySelector('[data-marp-nav="zoom-in"]')?.addEventListener("click", () => {
     if (marpZoomIndex < ZOOM_STEPS.length - 1) {
       marpZoomIndex++;
@@ -653,6 +688,9 @@ export function renderPreview(
   const ext = getExtension(filePath ?? null);
   const isMd = !filePath || MD_EXTENSIONS.has(ext);
 
+  // Clear mode classes each render; each branch re-adds what it needs.
+  container.classList.remove("html-mode");
+
   // ── Image preview mode ──
   if (filePath && IMAGE_EXTENSIONS.has(ext)) {
     container.classList.remove("marp-mode");
@@ -684,6 +722,7 @@ export function renderPreview(
   // ── HTML live preview (sandboxed iframe) ──
   if (filePath && HTML_EXTENSIONS.has(ext)) {
     container.classList.remove("marp-mode");
+    container.classList.add("html-mode");
     ++renderToken;
     // Revoke previous HTML blob URL to prevent leak on rapid re-render
     if (currentHtmlBlobUrl) {
@@ -700,6 +739,12 @@ export function renderPreview(
     const assetOrigin = new URL(convertFileSrc("/")).origin;
     const cspTag = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline' ${assetOrigin}; img-src ${assetOrigin} data: blob:; font-src ${assetOrigin} data:; media-src ${assetOrigin}; connect-src 'none';">`;
     const baseTag = `<base href="${baseUrl}">`;
+    // Force scrolling on in preview, even if the source page sets overflow:hidden.
+    // Injected LAST so it overrides the page's own stylesheet.
+    const scrollStyleTag =
+      `<style id="__mdeditor_preview_overrides">` +
+      `html,body{overflow:auto !important;height:auto !important;max-height:none !important}` +
+      `</style>`;
     const headInjection = cspTag + baseTag;
     // Insert into <head> or prepend if no <head>
     let htmlContent: string;
@@ -710,10 +755,41 @@ export function renderPreview(
     } else {
       htmlContent = `${headInjection}${content}`;
     }
+    // Append the override style at the very end of <head> (or start of body if
+    // no head) so it wins over any later-defined stylesheet in the source.
+    if (/<\/head>/i.test(htmlContent)) {
+      htmlContent = htmlContent.replace(/<\/head>/i, `${scrollStyleTag}</head>`);
+    } else {
+      htmlContent = `${scrollStyleTag}${htmlContent}`;
+    }
     const blob = new Blob([htmlContent], { type: "text/html" });
     currentHtmlBlobUrl = URL.createObjectURL(blob);
     container.innerHTML =
-      `<iframe class="html-preview-frame" sandbox="" src="${currentHtmlBlobUrl}"></iframe>`;
+      `<div class="html-preview-scroller">` +
+      `<iframe class="html-preview-frame" sandbox="" src="${currentHtmlBlobUrl}"></iframe>` +
+      `</div>` +
+      `<div class="preview-zoom-bar">` +
+      `<button class="marp-nav-btn" data-html-zoom="out" title="Zoom Out">` +
+      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg>` +
+      `</button>` +
+      `<span class="html-zoom-label">${HTML_ZOOM_STEPS[htmlZoomIndex]}%</span>` +
+      `<button class="marp-nav-btn" data-html-zoom="in" title="Zoom In">` +
+      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>` +
+      `</button>` +
+      `</div>`;
+    applyHtmlZoom(container);
+    container.querySelector('[data-html-zoom="in"]')?.addEventListener("click", () => {
+      if (htmlZoomIndex < HTML_ZOOM_STEPS.length - 1) {
+        htmlZoomIndex++;
+        applyHtmlZoom(container);
+      }
+    });
+    container.querySelector('[data-html-zoom="out"]')?.addEventListener("click", () => {
+      if (htmlZoomIndex > 0) {
+        htmlZoomIndex--;
+        applyHtmlZoom(container);
+      }
+    });
     return;
   }
 
@@ -756,19 +832,17 @@ export function renderPreview(
       currentPdfBlobUrl = null;
     }
     // read_file_binary returns base64 — convert to Blob URL for <embed>
-    import("@tauri-apps/api/core").then(({ invoke }) => {
-      invoke<string>("read_file_binary", { path: pdfPath }).then((b64) => {
-        if (token !== renderToken) return;
-        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        const blob = new Blob([bytes], { type: "application/pdf" });
-        const url = URL.createObjectURL(blob);
-        currentPdfBlobUrl = url;
-        container.innerHTML =
-          `<embed src="${url}" type="application/pdf" class="pdf-embed" />`;
-      }).catch(() => {
-        if (token !== renderToken) return;
-        container.innerHTML = '<div class="external-file-preview"><p>Failed to load PDF</p></div>';
-      });
+    invoke<string>("read_file_binary", { path: pdfPath }).then((b64) => {
+      if (token !== renderToken) return;
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      currentPdfBlobUrl = url;
+      container.innerHTML =
+        `<embed src="${url}" type="application/pdf" class="pdf-embed" />`;
+    }).catch(() => {
+      if (token !== renderToken) return;
+      container.innerHTML = '<div class="external-file-preview"><p>Failed to load PDF</p></div>';
     });
     return;
   }
@@ -778,10 +852,7 @@ export function renderPreview(
     container.classList.remove("marp-mode");
     const docxPath = filePath;
     const token = ++renderToken;
-    Promise.all([
-      import("@tauri-apps/api/core"),
-      import("mammoth"),
-    ]).then(([{ invoke }, mammoth]) => {
+    import("mammoth").then((mammoth) => {
       invoke<string>("read_file_binary", { path: docxPath }).then((b64) => {
         if (token !== renderToken) return;
         const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));

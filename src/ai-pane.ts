@@ -6,6 +6,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Marked } from "marked";
 import hljs from "highlight.js/lib/core";
 import DOMPurify from "dompurify";
@@ -13,7 +14,15 @@ import { escapeHtml } from "./html-utils";
 import plusIcon from "lucide-static/icons/plus.svg?raw";
 import historyIcon from "lucide-static/icons/clock.svg?raw";
 import xIcon from "lucide-static/icons/x.svg?raw";
+import paperclipIcon from "lucide-static/icons/paperclip.svg?raw";
 import chevronDownIcon from "lucide-static/icons/chevron-down.svg?raw";
+import fileIcon from "lucide-static/icons/file.svg?raw";
+import codeIcon from "lucide-static/icons/code.svg?raw";
+import messageIcon from "lucide-static/icons/message-circle.svg?raw";
+import listIcon from "lucide-static/icons/list.svg?raw";
+import imageIcon from "lucide-static/icons/image.svg?raw";
+import cursorIcon from "lucide-static/icons/text-cursor.svg?raw";
+import branchIcon from "lucide-static/icons/git-branch.svg?raw";
 import claudeIcon from "./icons/ai_claude.svg?raw";
 import openaiIcon from "./icons/ai_open_ai.svg?raw";
 
@@ -27,6 +36,10 @@ interface Options {
   pane: HTMLElement;
   divider: HTMLElement;
   initialCwd: string | null;
+  /** Return the current editor selection text (empty string if none). */
+  getEditorSelection?: () => string;
+  /** Return the path of the file currently open in the editor. */
+  getCurrentFilePath?: () => string | null;
 }
 
 /* ── Types from ACP ────────────────────────────────────────────────── */
@@ -183,8 +196,12 @@ export function createAiPane(opts: Options): AiPaneController {
       </div>
       <div class="ai-chat-input-area">
         <div class="ai-slash-menu" style="display:none"></div>
-        <textarea class="ai-chat-input" placeholder="Type a message... (/ for commands)" rows="1"></textarea>
-        <button class="ai-chat-send" title="Send (Enter)">↑</button>
+        <div class="ai-context-chips" style="display:none"></div>
+        <div class="ai-chat-input-row">
+          <textarea class="ai-chat-input" placeholder="Type a message... (/ for commands)" rows="1"></textarea>
+          <button class="ai-chat-attach" title="Attach file as context">${paperclipIcon}</button>
+          <button class="ai-chat-send" title="Send (Enter)">↑</button>
+        </div>
       </div>
     </div>
   `;
@@ -199,6 +216,8 @@ export function createAiPane(opts: Options): AiPaneController {
   const emptyHintEl = pane.querySelector<HTMLElement>(".ai-chat-hint")!;
   const inputEl = pane.querySelector<HTMLTextAreaElement>(".ai-chat-input")!;
   const sendBtn = pane.querySelector<HTMLButtonElement>(".ai-chat-send")!;
+  const attachBtn = pane.querySelector<HTMLButtonElement>(".ai-chat-attach")!;
+  const chipsEl = pane.querySelector<HTMLElement>(".ai-context-chips")!;
   const slashMenuEl = pane.querySelector<HTMLElement>(".ai-slash-menu")!;
   const toolIconEl = pane.querySelector<HTMLElement>(".ai-tool-icon")!;
   const toolLabelEl = pane.querySelector<HTMLElement>(".ai-tool-label")!;
@@ -229,6 +248,219 @@ export function createAiPane(opts: Options): AiPaneController {
     inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px";
   }
   inputEl.addEventListener("input", autoResize);
+
+  /* ── Context attachments ───────────────────────────────────────── */
+
+  type ContextItem =
+    | { kind: "file"; path: string }
+    | { kind: "image"; path: string }
+    | { kind: "selection"; label: string; content: string }
+    | { kind: "rules"; path: string };
+
+  const contextItems: ContextItem[] = [];
+
+  function basename(p: string): string {
+    return p.split(/[/\\]/).pop() || p;
+  }
+
+  function chipLabel(item: ContextItem): string {
+    switch (item.kind) {
+      case "file":
+      case "image":
+      case "rules":
+        return basename(item.path);
+      case "selection":
+        return item.label;
+    }
+  }
+
+  function chipTitle(item: ContextItem): string {
+    switch (item.kind) {
+      case "file":
+      case "image":
+      case "rules":
+        return item.path;
+      case "selection":
+        return item.content.slice(0, 200);
+    }
+  }
+
+  function renderChips(): void {
+    if (contextItems.length === 0) {
+      chipsEl.style.display = "none";
+      chipsEl.replaceChildren();
+      return;
+    }
+    chipsEl.style.display = "";
+    chipsEl.innerHTML = contextItems
+      .map(
+        (item, i) =>
+          `<span class="ai-context-chip ai-context-chip-${item.kind}" title="${escapeHtml(chipTitle(item))}">` +
+          `<span class="ai-context-chip-name">${escapeHtml(chipLabel(item))}</span>` +
+          `<button class="ai-context-chip-remove" data-chip-idx="${i}" aria-label="Remove">×</button>` +
+          `</span>`,
+      )
+      .join("");
+  }
+
+  chipsEl.addEventListener("click", (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) return;
+    const btn = target.closest<HTMLElement>(".ai-context-chip-remove");
+    if (!btn) return;
+    const idx = Number(btn.dataset.chipIdx);
+    if (!Number.isNaN(idx)) {
+      contextItems.splice(idx, 1);
+      renderChips();
+    }
+  });
+
+  /* ── Context menu (paperclip dropdown) ─────────────────────────── */
+
+  interface MenuItem {
+    id: string;
+    label: string;
+    icon: string;
+    disabled?: boolean;
+    run?: () => void | Promise<void>;
+  }
+
+  const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"];
+  const RULE_FILENAMES = ["CLAUDE.md", "AGENTS.md", ".cursorrules", ".windsurfrules"];
+
+  async function addFilesOrDirs(): Promise<void> {
+    const picked = await openDialog({
+      multiple: true,
+      directory: false,
+      defaultPath: _cwd ?? undefined,
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    for (const p of paths) {
+      if (!contextItems.some((it) => it.kind === "file" && it.path === p)) {
+        contextItems.push({ kind: "file", path: p });
+      }
+    }
+    renderChips();
+  }
+
+  async function addImage(): Promise<void> {
+    const picked = await openDialog({
+      multiple: true,
+      directory: false,
+      defaultPath: _cwd ?? undefined,
+      filters: [{ name: "Images", extensions: IMAGE_EXTS }],
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    for (const p of paths) {
+      if (!contextItems.some((it) => it.kind === "image" && it.path === p)) {
+        contextItems.push({ kind: "image", path: p });
+      }
+    }
+    renderChips();
+  }
+
+  function addSelection(): void {
+    const sel = opts.getEditorSelection?.() ?? "";
+    if (!sel.trim()) {
+      appendMsg("system", "No editor selection to attach.");
+      return;
+    }
+    const curPath = opts.getCurrentFilePath?.() ?? null;
+    const label = curPath ? `${basename(curPath)} selection` : "Selection";
+    contextItems.push({ kind: "selection", label, content: sel });
+    renderChips();
+  }
+
+  async function addRules(): Promise<void> {
+    const picked = await openDialog({
+      multiple: true,
+      directory: false,
+      defaultPath: _cwd ?? undefined,
+      filters: [{ name: "Rules", extensions: ["md", "cursorrules", "windsurfrules"] }],
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    for (const p of paths) {
+      if (!contextItems.some((it) => it.kind === "rules" && it.path === p)) {
+        contextItems.push({ kind: "rules", path: p });
+      }
+    }
+    renderChips();
+  }
+
+  const MENU_ITEMS: MenuItem[] = [
+    { id: "files", label: "Files & Directories", icon: fileIcon, run: addFilesOrDirs },
+    { id: "symbols", label: "Symbols", icon: codeIcon, disabled: true },
+    { id: "threads", label: "Threads", icon: messageIcon, disabled: true },
+    { id: "rules", label: "Rules", icon: listIcon, run: addRules },
+    { id: "image", label: "Image", icon: imageIcon, run: addImage },
+    { id: "selection", label: "Selection", icon: cursorIcon, run: addSelection },
+    { id: "branch", label: "Branch Diff", icon: branchIcon, disabled: true },
+  ];
+
+  let contextMenuVisible = false;
+  const contextMenuEl = document.createElement("div");
+  contextMenuEl.className = "ai-context-menu";
+  contextMenuEl.style.display = "none";
+  contextMenuEl.innerHTML =
+    `<div class="ai-context-menu-title">Context</div>` +
+    MENU_ITEMS.map(
+      (item) =>
+        `<button class="ai-context-menu-item${item.disabled ? " disabled" : ""}" data-menu-id="${item.id}"${item.disabled ? " disabled" : ""}>` +
+        `<span class="ai-context-menu-icon">${item.icon}</span>` +
+        `<span>${item.label}</span>` +
+        `</button>`,
+    ).join("");
+  pane.querySelector(".ai-chat-input-area")!.appendChild(contextMenuEl);
+
+  function toggleContextMenu(force?: boolean): void {
+    const next = force ?? !contextMenuVisible;
+    contextMenuVisible = next;
+    contextMenuEl.style.display = next ? "" : "none";
+  }
+
+  attachBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleContextMenu();
+  });
+  contextMenuEl.addEventListener("click", (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) return;
+    const btn = target.closest<HTMLElement>(".ai-context-menu-item");
+    if (!btn || btn.classList.contains("disabled")) return;
+    const id = btn.dataset.menuId;
+    const item = MENU_ITEMS.find((m) => m.id === id);
+    toggleContextMenu(false);
+    if (item?.run) void item.run();
+  });
+  document.addEventListener("click", (e) => {
+    if (!contextMenuVisible) return;
+    const target = e.target;
+    if (target instanceof Node && contextMenuEl.contains(target)) return;
+    toggleContextMenu(false);
+  });
+
+  async function buildContextPreamble(): Promise<string> {
+    if (contextItems.length === 0) return "";
+    const parts: string[] = [];
+    for (const item of contextItems) {
+      try {
+        if (item.kind === "file" || item.kind === "rules") {
+          const content = await invoke<string>("read_file", { path: item.path });
+          parts.push(`\`\`\`${basename(item.path)}\n${content}\n\`\`\``);
+        } else if (item.kind === "image") {
+          parts.push(`[image attached: ${item.path}]`);
+        } else if (item.kind === "selection") {
+          parts.push(`\`\`\`${item.label}\n${item.content}\n\`\`\``);
+        }
+      } catch (e) {
+        parts.push(`<!-- failed to load ${chipLabel(item)}: ${String(e)} -->`);
+      }
+    }
+    return `Context:\n\n${parts.join("\n\n")}\n\n---\n\n`;
+  }
 
   function resetToEmptyState(hint = "Type / to see available commands"): void {
     messagesEl.replaceChildren(emptyEl);
@@ -749,6 +981,14 @@ export function createAiPane(opts: Options): AiPaneController {
       if (!acpSessionId) return;
     }
 
+    const preamble = await buildContextPreamble();
+    const fullPrompt = preamble + text;
+    const userDisplay = contextItems.length > 0
+      ? `📎 ${contextItems.map(chipLabel).join(", ")}\n\n${text}`
+      : text;
+    contextItems.length = 0;
+    renderChips();
+
     inputEl.value = "";
     autoResize();
     hideSlashMenu();
@@ -756,7 +996,7 @@ export function createAiPane(opts: Options): AiPaneController {
     sendBtn.disabled = true;
     sendBtn.textContent = "…";
 
-    appendMsg("user", text);
+    appendMsg("user", userDisplay);
 
     // Prepare streaming
     streamingText = "";
@@ -765,7 +1005,7 @@ export function createAiPane(opts: Options): AiPaneController {
     try {
       const json = await invoke<string>("acp_prompt", {
         sessionId: acpSessionId,
-        prompt: text,
+        prompt: fullPrompt,
       });
       // Prompt finished — finalize
       removeThinkingIndicator();
