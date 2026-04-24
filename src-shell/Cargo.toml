@@ -8,14 +8,8 @@ name = "mdeditor-shell"
 path = "src/main.rs"
 
 [dependencies]
-wry = "0.45"
-tao = "0.30"
-serde = { version = "1", features = ["derive"] }
+fude = { package = "fude-rs", version = "0.1.2" }
 serde_json = "1"
-base64 = "0.22"
-rfd = { version = "0.15", default-features = false }
-portable-pty = "0.9"
-tokio = { version = "1", features = ["rt", "io-util", "process", "sync", "macros", "time"] }
 
 [profile.release]
 strip = true

@@ -1,240 +1,137 @@
-// Minimal wry + tao shell for mdeditor. No Tauri runtime.
-//
-// Exposes `window.__shell_ipc(cmd, args)` to the frontend and dispatches to
-// the command fns in `commands.rs`. Path sandbox rules mirror
-// `src-tauri/src/lib.rs` so the allow-list semantics are preserved.
+// mdeditor shell entrypoint. All the heavy lifting — window, IPC bridge,
+// path sandbox, dialogs, PTY, ACP — lives in the `fude` crate. Here we
+// just configure it and register the four app-specific commands for
+// settings persistence, folder reopen, and the image scratch directory.
 
-mod acp;
-mod acp_commands;
-mod commands;
-mod dialogs;
-mod events;
-mod pty;
-mod sandbox;
+use std::fs;
+use std::path::PathBuf;
 
-use std::path::{Path, PathBuf};
-
-use serde::{Deserialize, Serialize};
-use tao::{
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoopBuilder},
-    window::WindowBuilder,
+use fude::{
+    app_config_dir, atomic_write, ensure_scratch_dir, safe_lock, validate_path, AcpAdapterConfig,
+    App, Ctx, FsState,
 };
-use wry::{http::Response, WebViewBuilder};
+use serde_json::Value;
 
-use commands::AppState;
-use sandbox::new_list;
-
-#[derive(Deserialize)]
-struct IpcRequest {
-    id: u64,
-    cmd: String,
-    #[serde(default)]
-    args: serde_json::Value,
-}
-
-#[derive(Serialize)]
-struct IpcResponse {
-    id: u64,
-    ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-pub enum UserEvent {
-    IpcReply(String),
-    Eval(String),
-}
-
-fn dispatch(
-    state: &AppState,
-    pty_sessions: &pty::PtySessions,
-    acp_ctx: &acp_commands::AcpCtx,
-    emitter: &events::EventEmitter,
-    cmd: &str,
-    args: &serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    match cmd {
-        "ping" => Ok(serde_json::json!("pong")),
-        "allow_path" => commands::allow_path(state, args),
-        "allow_dir" => commands::allow_dir(state, args),
-        "reopen_dir" => commands::reopen_dir(state, args),
-        "list_directory" => commands::list_directory(state, args),
-        "read_file" => commands::read_file(state, args),
-        "read_file_binary" => commands::read_file_binary(state, args),
-        "write_file" => commands::write_file(state, args),
-        "write_file_binary" => commands::write_file_binary(state, args),
-        "ensure_dir" => commands::ensure_dir(state, args),
-        "get_image_temp_dir" => commands::get_image_temp_dir(state, args),
-        "load_settings" => commands::load_settings(state, args),
-        "save_settings" => commands::save_settings(state, args),
-        "dialog_open" => dialogs::open(args),
-        "dialog_save" => dialogs::save(args),
-        "dialog_ask" => dialogs::ask(args),
-        "dialog_message" => dialogs::message(args),
-        "pty_spawn" => pty::spawn(pty_sessions, &state.allowed_dirs, emitter, args),
-        "pty_write" => pty::write(pty_sessions, args),
-        "pty_resize" => pty::resize(pty_sessions, args),
-        "pty_kill" => pty::kill(pty_sessions, args),
-        "acp_get_adapter" => acp_commands::get_adapter(acp_ctx),
-        "acp_set_adapter" => acp_commands::set_adapter(acp_ctx, args),
-        "acp_initialize" => acp_commands::initialize(acp_ctx, state, emitter),
-        "acp_new_session" => acp_commands::new_session(acp_ctx, state, emitter, args),
-        "acp_prompt" => acp_commands::prompt(acp_ctx, state, emitter, args),
-        "acp_cancel" => acp_commands::cancel(acp_ctx, state, emitter, args),
-        "acp_set_model" => acp_commands::set_model(acp_ctx, state, emitter, args),
-        "acp_set_config" => acp_commands::set_config(acp_ctx, state, emitter, args),
-        "acp_list_sessions" => acp_commands::list_sessions(acp_ctx, state, emitter, args),
-        "acp_resume_session" => acp_commands::resume_session(acp_ctx, state, emitter, args),
-        "acp_shutdown" => acp_commands::shutdown(acp_ctx),
-        _ => Err(format!("unknown cmd: {cmd}")),
-    }
-}
-
-fn dist_dir() -> PathBuf {
+fn dist_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist")
 }
 
-fn serve_asset(req_path: &str) -> Response<Vec<u8>> {
-    let rel = req_path.trim_start_matches('/');
-    let rel = if rel.is_empty() { "index.html" } else { rel };
-    let path = dist_dir().join(rel);
-    let path = if path.is_dir() { path.join("index.html") } else { path };
+fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("missing arg: {}", key))
+}
 
-    match std::fs::read(&path) {
-        Ok(body) => Response::builder()
-            .header("Content-Type", mime_for(&path))
-            .header("Access-Control-Allow-Origin", "*")
-            .body(body)
-            .unwrap(),
-        Err(_) => Response::builder()
-            .status(404)
-            .body(b"not found".to_vec())
-            .unwrap(),
+fn require_fs(ctx: &Ctx) -> Result<&std::sync::Arc<FsState>, String> {
+    ctx.fs
+        .as_ref()
+        .ok_or_else(|| "fs sandbox not enabled".to_string())
+}
+
+fn reopen_dir(ctx: &Ctx, args: &Value) -> Result<Value, String> {
+    let fs_state = require_fs(ctx)?;
+    let path = arg_str(args, "path")?;
+    validate_path(path)?;
+
+    let settings_path = app_config_dir(&ctx.identifier)?.join("settings.json");
+    if !settings_path.exists() {
+        return Err("No saved settings found".to_string());
+    }
+    let json_str = fs::read_to_string(&settings_path)
+        .map_err(|e| format!("Cannot read settings: {}", e))?;
+    let settings: Value = serde_json::from_str(&json_str)
+        .map_err(|e| format!("Cannot parse settings: {}", e))?;
+    let in_recent = settings
+        .get("recentFolders")
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(path)));
+    let is_last = settings.get("lastOpenedFolder").and_then(|v| v.as_str()) == Some(path);
+    if !in_recent && !is_last {
+        return Err("Directory not found in saved settings".to_string());
+    }
+
+    let canonical = fs::canonicalize(path)
+        .map_err(|_| "Directory does not exist".to_string())?
+        .to_string_lossy()
+        .to_string();
+    let mut dirs = safe_lock(&fs_state.allowed_dirs);
+    if !dirs.contains(&canonical) {
+        dirs.push(canonical);
+    }
+    Ok(Value::Null)
+}
+
+fn get_image_temp_dir(ctx: &Ctx, _args: &Value) -> Result<Value, String> {
+    let dir = ensure_scratch_dir(ctx, "temp-images")?;
+    Ok(Value::from(dir.to_string_lossy().to_string()))
+}
+
+fn load_settings(ctx: &Ctx, _args: &Value) -> Result<Value, String> {
+    let settings_path = app_config_dir(&ctx.identifier)?.join("settings.json");
+    if settings_path.exists() {
+        let content = fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Cannot read settings: {}", e))?;
+        Ok(Value::from(content))
+    } else {
+        Ok(Value::from("{}"))
     }
 }
 
-fn mime_for(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
-        "html" => "text/html; charset=utf-8",
-        "js" | "mjs" => "application/javascript; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
-        "json" => "application/json",
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "woff2" => "font/woff2",
-        "woff" => "font/woff",
-        "wasm" => "application/wasm",
-        _ => "application/octet-stream",
+fn save_settings(ctx: &Ctx, args: &Value) -> Result<Value, String> {
+    let settings = arg_str(args, "settings")?;
+    let mut parsed: Value =
+        serde_json::from_str(settings).map_err(|e| format!("Invalid settings JSON: {}", e))?;
+    if !parsed.is_object() {
+        return Err("Settings must be a JSON object".to_string());
     }
-}
-
-const IPC_INIT: &str = r#"
-(() => {
-  let nextId = 1;
-  const pending = new Map();
-  const listeners = new Map();
-
-  window.__shell_on_reply = (payload) => {
-    try {
-      const msg = typeof payload === "string" ? JSON.parse(payload) : payload;
-      const p = pending.get(msg.id);
-      if (!p) return;
-      pending.delete(msg.id);
-      if (msg.ok) p.resolve(msg.result); else p.reject(new Error(msg.error || "ipc error"));
-    } catch (e) { console.error(e); }
-  };
-  window.__shell_on_event = (name, payload) => {
-    const set = listeners.get(name);
-    if (!set) return;
-    for (const fn of set) { try { fn(payload); } catch (e) { console.error(e); } }
-  };
-  window.__shell_ipc = (cmd, args = {}) => new Promise((resolve, reject) => {
-    const id = nextId++;
-    pending.set(id, { resolve, reject });
-    window.ipc.postMessage(JSON.stringify({ id, cmd, args }));
-  });
-  window.__shell_listen = (name, fn) => {
-    if (!listeners.has(name)) listeners.set(name, new Set());
-    listeners.get(name).add(fn);
-    return () => listeners.get(name)?.delete(fn);
-  };
-})();
-"#;
-
-fn main() -> wry::Result<()> {
-    let state = std::sync::Arc::new(AppState {
-        allowed_paths: new_list(),
-        allowed_dirs: new_list(),
-    });
-    let pty_sessions = std::sync::Arc::new(pty::PtySessions::new());
-    let acp_ctx = std::sync::Arc::new(acp_commands::AcpCtx::new(
-        env!("CARGO_PKG_VERSION").to_string(),
-    ));
-
-    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
-    let proxy = event_loop.create_proxy();
-    let emitter = events::EventEmitter::new(proxy.clone());
-    let window = WindowBuilder::new()
-        .with_title("mdeditor (shell poc)")
-        .build(&event_loop)
-        .unwrap();
-
-    let state_for_ipc = state.clone();
-    let pty_for_ipc = pty_sessions.clone();
-    let acp_for_ipc = acp_ctx.clone();
-    let emitter_for_ipc = emitter.clone();
-    let webview = WebViewBuilder::new(&window)
-        .with_url("asset://localhost/")
-        .with_initialization_script(IPC_INIT)
-        .with_custom_protocol("asset".into(), move |req| {
-            serve_asset(req.uri().path()).map(|b| b.into())
-        })
-        .with_ipc_handler(move |req| {
-            let body: &str = req.body();
-            let parsed: Result<IpcRequest, _> = serde_json::from_str(body);
-            let response = match parsed {
-                Ok(r) => {
-                    let (ok, result, error) = match dispatch(
-                        &state_for_ipc,
-                        &pty_for_ipc,
-                        &acp_for_ipc,
-                        &emitter_for_ipc,
-                        &r.cmd,
-                        &r.args,
-                    ) {
-                        Ok(v) => (true, Some(v), None),
-                        Err(e) => (false, None, Some(e)),
-                    };
-                    IpcResponse { id: r.id, ok, result, error }
-                }
-                Err(e) => IpcResponse {
-                    id: 0,
-                    ok: false,
-                    result: None,
-                    error: Some(format!("bad ipc: {e}")),
-                },
-            };
-            let json = serde_json::to_string(&response).unwrap_or_else(|_| "{}".into());
-            let js = format!("window.__shell_on_reply({json})");
-            let _ = proxy.send_event(UserEvent::IpcReply(js));
-        })
-        .build()?;
-
-    event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Wait;
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => *control_flow = ControlFlow::Exit,
-            Event::UserEvent(UserEvent::IpcReply(js)) | Event::UserEvent(UserEvent::Eval(js)) => {
-                let _ = webview.evaluate_script(&js);
+    if let Some(obj) = parsed.as_object_mut() {
+        if let Some(v) = obj.get_mut("recentFolders") {
+            if let Some(arr) = v.as_array_mut() {
+                arr.retain(|entry| entry.as_str().map(|s| validate_path(s).is_ok()).unwrap_or(false));
             }
-            _ => {}
         }
-    });
+        let bad_last = obj
+            .get("lastOpenedFolder")
+            .and_then(|v| v.as_str())
+            .map(|s| validate_path(s).is_err())
+            .unwrap_or(false);
+        if bad_last {
+            obj.remove("lastOpenedFolder");
+        }
+    }
+    let sanitised =
+        serde_json::to_string(&parsed).map_err(|e| format!("Failed to serialise settings: {}", e))?;
+    let config_dir = app_config_dir(&ctx.identifier)?;
+    fs::create_dir_all(&config_dir).map_err(|e| format!("Cannot create config dir: {}", e))?;
+    atomic_write(&config_dir.join("settings.json"), sanitised.as_bytes())?;
+    Ok(Value::Null)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    App::new("com.mdeditor.editor")
+        .title("mdeditor (shell)")
+        .assets(dist_root())
+        .with_fs_sandbox()
+        .with_dialogs()
+        .with_pty(&["claude", "codex"])
+        .with_acp(
+            vec![
+                AcpAdapterConfig {
+                    name: "claude".into(),
+                    candidate_bin_names: vec!["claude-agent-acp".into()],
+                },
+                AcpAdapterConfig {
+                    name: "codex".into(),
+                    candidate_bin_names: vec!["codex-acp".into(), "codex-agent-acp".into()],
+                },
+            ],
+            "mdeditor",
+            env!("CARGO_PKG_VERSION"),
+        )
+        .command("ping", |_ctx, _args| Ok(Value::from("pong")))
+        .command("reopen_dir", reopen_dir)
+        .command("get_image_temp_dir", get_image_temp_dir)
+        .command("load_settings", load_settings)
+        .command("save_settings", save_settings)
+        .run()
 }
