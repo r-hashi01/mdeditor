@@ -33,6 +33,7 @@
 - **目次（TOC）自動生成** — `h1–h3`、スムーズスクロールで見出しへ移動
 - **外観カスタマイズ** — 10 種類の組み込みテーマ（Catppuccin、GitHub、Dracula、Nord、Tokyo Night、Rosé Pine、Solarized…）、エディタ / プレビューのフォントファミリ・サイズ、行間、行番号、TOC 表示
 - **AI ペイン**（`Cmd/Ctrl+J`）— 開いているフォルダを cwd として `claude` / `codex` CLI を埋め込み PTY ターミナルで起動。Claude と Codex はタブで切り替え、フォルダを切り替えるとセッションは自動で再起動
+- **AI コンテキスト添付** — クリップボタンから Files & Directories / 現在の選択範囲 / プロジェクト Rules / 画像 を次のプロンプトに添付（Zed / Cursor 風）。送信前にチップで内容を確認可能
 
 ### レンダリング
 
@@ -41,7 +42,8 @@
 - **Marp** プレゼン — スライド単位の frontmatter、スコープ付きディレクティブ、`default` / `gaia` / `uncover` 組み込みテーマ、`</style>` エスケープ / `@import` ブロック
 - **draw.io** (`.drawio`) — `mxGraphModel` を外部ランタイム無しでインライン SVG 描画（rect / ellipse / rhombus / edges / text）
 - **CSV / TSV** ビューア — クォート付きフィールド対応
-- **SVG / HTML / PDF / DOCX / 画像** のプレビュー
+- **SVG / HTML / PDF / DOCX / 画像** のプレビュー。Marp / HTML / PDF で統一された下部ズームバー（`-` / `+` / パーセント表示）
+- **Marp の PDF 書き出し目安ライン** — 各スライドに破線の 16:9 カットラインを表示し、PDF 出力時に切れる位置を可視化
 - **コードブロック**のシンタックスハイライト（highlight.js）
 
 ### デスクトップ統合

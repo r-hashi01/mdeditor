@@ -34,6 +34,7 @@ A fast, native Markdown editor built with [Tauri v2](https://v2.tauri.app/).
 - **Table of contents** auto-generated from `h1–h3`, smooth-scroll navigation
 - **Configurable appearance** — 10 built-in themes (Catppuccin, GitHub, Dracula, Nord, Tokyo Night, Rosé Pine, Solarized…), editor / preview font family and size, line height, line numbers, TOC visibility
 - **AI pane** (`Cmd/Ctrl+J`) — run `claude` or `codex` CLI inside an embedded PTY terminal, rooted at the open folder. Claude and Codex live in separate tabs; sessions restart automatically when you switch folders
+- **AI context attachments** — paperclip menu to attach Files & Directories, the current editor Selection, project Rules, or an Image to the next prompt (Zed / Cursor–style). Chips preview what will be sent
 
 ### Rendering
 
@@ -42,7 +43,8 @@ A fast, native Markdown editor built with [Tauri v2](https://v2.tauri.app/).
 - **Marp** presentations — slide-aware frontmatter, per-slide scoped directives, built-in `default` / `gaia` / `uncover` themes, `<style>`-escape & `@import` blocking
 - **draw.io** (`.drawio`) — inline SVG rendering of `mxGraphModel` (rect / ellipse / rhombus / edges / text) without an external runtime
 - **CSV / TSV** viewer with quoted-field parsing
-- **SVG / HTML / PDF / DOCX / images** preview
+- **SVG / HTML / PDF / DOCX / images** preview, with a unified bottom zoom bar (`-` / `+` / percentage) across Marp, HTML, and PDF modes
+- **Marp PDF cut guide** — dashed 16:9 line on every slide so authors see exactly where the exported PDF edge lands
 - **Code block syntax highlighting** in the preview via highlight.js
 
 ### Desktop integration
