@@ -1,6 +1,12 @@
 import { EditorView, basicSetup } from "codemirror";
 import { keymap, ViewPlugin, WidgetType, Decoration, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+// lang-html, lang-css, lang-javascript are transitively pulled in as static
+// deps of lang-markdown's fenced-code support, so there's no point dynamic-
+// importing them — Rollup can't split what's already in the main chunk.
+import { html as cmHtml } from "@codemirror/lang-html";
+import { css as cmCss } from "@codemirror/lang-css";
+import { javascript as cmJavascript } from "@codemirror/lang-javascript";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorState, StateField, Compartment, Prec, RangeSetBuilder, StateEffect, type Extension } from "@codemirror/state";
 import { LanguageDescription } from "@codemirror/language";
@@ -9,11 +15,11 @@ import { openSearchPanel } from "@codemirror/search";
  *  Each entry dynamic-imports its grammar only when the fenced block's lang is matched,
  *  so unused grammars don't bloat the initial bundle. */
 const codeLanguages = [
-  LanguageDescription.of({ name: "JavaScript", alias: ["js", "jsx", "ts", "tsx", "typescript"], load: async () => (await import("@codemirror/lang-javascript")).javascript() }),
+  LanguageDescription.of({ name: "JavaScript", alias: ["js", "jsx", "ts", "tsx", "typescript"], load: async () => cmJavascript() }),
   LanguageDescription.of({ name: "Python", alias: ["py"], load: async () => (await import("@codemirror/lang-python")).python() }),
   LanguageDescription.of({ name: "Rust", alias: ["rs"], load: async () => (await import("@codemirror/lang-rust")).rust() }),
-  LanguageDescription.of({ name: "CSS", alias: ["scss", "less"], load: async () => (await import("@codemirror/lang-css")).css() }),
-  LanguageDescription.of({ name: "HTML", alias: ["htm", "xml", "svg"], load: async () => (await import("@codemirror/lang-html")).html() }),
+  LanguageDescription.of({ name: "CSS", alias: ["scss", "less"], load: async () => cmCss() }),
+  LanguageDescription.of({ name: "HTML", alias: ["htm", "xml", "svg"], load: async () => cmHtml() }),
   LanguageDescription.of({ name: "JSON", load: async () => (await import("@codemirror/lang-json")).json() }),
   LanguageDescription.of({ name: "YAML", alias: ["yml"], load: async () => (await import("@codemirror/lang-yaml")).yaml() }),
   LanguageDescription.of({ name: "XML", load: async () => (await import("@codemirror/lang-xml")).xml() }),
@@ -300,17 +306,17 @@ async function loadLanguageForFile(filePath: string | null): Promise<Extension> 
     case "xml": case "svg":
       return (await import("@codemirror/lang-xml")).xml();
     case "html": case "htm":
-      return (await import("@codemirror/lang-html")).html();
+      return cmHtml();
     case "js": case "jsx": case "mjs": case "cjs":
-      return (await import("@codemirror/lang-javascript")).javascript();
+      return cmJavascript();
     case "ts": case "tsx": case "mts": case "cts":
-      return (await import("@codemirror/lang-javascript")).javascript({ typescript: true });
+      return cmJavascript({ typescript: true });
     case "py":
       return (await import("@codemirror/lang-python")).python();
     case "rs":
       return (await import("@codemirror/lang-rust")).rust();
     case "css": case "scss": case "less":
-      return (await import("@codemirror/lang-css")).css();
+      return cmCss();
     case "sql":
       return (await import("@codemirror/lang-sql")).sql();
     case "sh": case "bash": case "zsh":

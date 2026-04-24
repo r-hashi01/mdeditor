@@ -1,0 +1,23 @@
+[package]
+name = "mdeditor-shell"
+version = "0.0.0"
+edition = "2021"
+
+[[bin]]
+name = "mdeditor-shell"
+path = "src/main.rs"
+
+[dependencies]
+fude = { package = "fude-rs", version = "0.1.2" }
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = "fat"
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
+incremental = false
+
+[profile.release.package."*"]
+opt-level = "z"

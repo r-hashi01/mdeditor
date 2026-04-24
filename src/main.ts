@@ -16,6 +16,7 @@ import { basename } from "./path-utils";
 import { createAiPane } from "./ai-pane";
 import { undo, redo } from "@codemirror/commands";
 import { listen } from "@tauri-apps/api/event";
+import { ask } from "@tauri-apps/plugin-dialog";
 import folderOpenIcon from "lucide-static/icons/folder-open.svg?raw";
 import folderTreeIcon from "lucide-static/icons/folder-tree.svg?raw";
 import saveIcon from "lucide-static/icons/save.svg?raw";
@@ -188,6 +189,11 @@ async function init(): Promise<void> {
     pane: document.getElementById("ai-pane")!,
     divider: document.getElementById("ai-divider")!,
     initialCwd: null,
+    getEditorSelection: () => {
+      const { from, to } = editor.state.selection.main;
+      return editor.state.sliceDoc(from, to);
+    },
+    getCurrentFilePath: () => tabManager?.getActiveTab()?.filePath ?? null,
   });
   aiPaneBtn.addEventListener("click", () => {
     const visible = aiPane.toggle();
@@ -236,11 +242,14 @@ async function init(): Promise<void> {
       }
     },
     onAllTabsClosed: () => {
-      // Clear stale editor content when all tabs are closed
+      // Clear stale editor content when all tabs are closed, but stay in
+      // the editor view — don't bounce back to the welcome screen. Also
+      // collapse the empty preview pane by switching to code-only view.
       editor.dispatch({
         changes: { from: 0, to: editor.state.doc.length, insert: "" },
       });
-      showWelcome();
+      setViewMode("code");
+      viewModeGroup.classList.add("disabled");
     },
     createEditorState: (content: string) => createEditorState(content),
   });
@@ -462,7 +471,6 @@ async function init(): Promise<void> {
     const ok = await reopenFolder(folder);
     if (!ok) {
       // Ask before removing — the folder may just be temporarily unavailable
-      const { ask } = await import("@tauri-apps/plugin-dialog");
       const remove = await ask(
         `Could not open folder "${folder.split(/[/\\]/).pop()}".\nThe path may not exist or is inaccessible.\n\nRemove from recent projects?`,
         { title: "Cannot Open Folder", kind: "warning" },

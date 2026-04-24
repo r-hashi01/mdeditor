@@ -1,3 +1,28 @@
+## [0.5.0] - 2026-04-24
+
+### Added
+- **AI pane context menu** — attach Files & Directories, Selection, Rules,
+  or Image context to prompts via a paperclip button, inspired by Zed /
+  Cursor. Context chips preview what will be sent; text is prepended as a
+  `Context:` preamble
+- **HTML preview** — bottom zoom toolbar (`-` / `+` / percentage) with
+  horizontal + vertical scroll inside a sandboxed iframe
+- **Marp preview** — PDF 16:9 cut indicator line so authors can see where
+  the exported slide edge lands, while still scrolling through overflow
+  content
+- **Unified preview zoom bar** — Marp / HTML / PDF share the same bottom
+  toolbar UI
+
+### Changed
+- Marp slides no longer clip content at a fixed aspect ratio; height
+  grows with content while the width-driven scale is preserved
+- HTML preview uses CSS `zoom` (layout-aware) instead of
+  `transform: scale` so scrollbars reflect the zoomed size
+
+### Experimental
+- `src-shell/` — minimal [fude-rs](https://crates.io/crates/fude-rs) 0.1.2
+  shell scaffold (not shipped in release bundles yet)
+
 ## [0.4.0] - 2026-04-21
 
 ### Added
