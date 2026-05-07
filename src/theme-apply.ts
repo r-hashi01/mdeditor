@@ -1,7 +1,7 @@
 import type { EditorView } from "codemirror";
 import type { AppSettings } from "./settings";
 import { THEME_PRESETS, getCodemirrorTheme, applyHljsTheme, getSyntaxColors } from "./themes";
-import { setEditorTheme, setEditorFont, setLineNumbers } from "./editor";
+import { setEditorTheme, setEditorFont, setLineNumbers, setVimMode } from "./editor";
 import { setMermaidTheme } from "./preview";
 
 function applyCssVariables(preset: (typeof THEME_PRESETS)[keyof typeof THEME_PRESETS]): void {
@@ -57,4 +57,7 @@ export function applySettings(settings: AppSettings, editorView: EditorView): vo
 
   // 5. Line numbers
   setLineNumbers(editorView, settings.showLineNumbers);
+
+  // 6. Vim mode
+  setVimMode(editorView, settings.vimMode);
 }

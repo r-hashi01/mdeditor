@@ -389,6 +389,152 @@ fn trim_line_around(line: &str, match_byte: usize, match_len: usize) -> (String,
     (snippet, new_match_start)
 }
 
+#[derive(serde::Serialize)]
+struct TagHit {
+    tag: String,
+    /// Absolute path of the file containing the tag.
+    path: String,
+    /// Path relative to the search root (POSIX).
+    rel: String,
+    /// 1-based line number where the tag appears.
+    line: u32,
+    /// Trimmed line excerpt for display.
+    snippet: String,
+}
+
+/// Walk every markdown file under an allowed directory and emit one hit per
+/// `#tag` occurrence. The frontend groups by tag in a palette.
+///
+/// Tag rules:
+///   - `#word` or `#word/sub` (slash-separated nesting)
+///   - Allowed chars: alnum, `-`, `_`, `/`
+///   - Skipped inside fenced code blocks and inline code spans
+///   - Lines starting with `# ` (heading) are not tags
+///   - Hex colors like `#ff0` / `#deadbeef` are filtered out
+#[tauri::command]
+fn extract_tags(path: String, state: State<'_, AllowedDirs>) -> Result<Vec<TagHit>, String> {
+    validate_path(&path)?;
+    let canonical = is_dir_allowed(&path, &state)?;
+    let root = std::path::PathBuf::from(&canonical);
+    let mut hits: Vec<TagHit> = Vec::new();
+    let mut stack: Vec<std::path::PathBuf> = vec![root.clone()];
+    let mut buf = String::with_capacity(8192);
+
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let entry_path = entry.path();
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if metadata.is_dir() {
+                if should_skip_dir(&name) {
+                    continue;
+                }
+                stack.push(entry_path);
+                continue;
+            }
+            if !metadata.is_file() {
+                continue;
+            }
+            let lower = name.to_ascii_lowercase();
+            if !(lower.ends_with(".md") || lower.ends_with(".markdown")) {
+                continue;
+            }
+            if metadata.len() > MAX_SEARCH_FILE_BYTES {
+                continue;
+            }
+            buf.clear();
+            if fs::File::open(&entry_path)
+                .and_then(|mut f| f.read_to_string(&mut buf))
+                .is_err()
+            {
+                continue;
+            }
+            let path_str = entry_path.to_string_lossy().to_string();
+            let rel = entry_path
+                .strip_prefix(&root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| name.clone());
+
+            extract_tags_from_text(&buf, |tag, line_num, line_text| {
+                hits.push(TagHit {
+                    tag: tag.to_string(),
+                    path: path_str.clone(),
+                    rel: rel.clone(),
+                    line: line_num,
+                    snippet: line_text.trim().chars().take(200).collect(),
+                });
+            });
+        }
+    }
+
+    Ok(hits)
+}
+
+fn extract_tags_from_text(src: &str, mut emit: impl FnMut(&str, u32, &str)) {
+    let mut in_fence = false;
+    for (idx, line) in src.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        // Markdown ATX heading line — `#` at the start with whitespace after isn't a tag.
+        if trimmed.starts_with('#') && trimmed.chars().nth(1).is_some_and(|c| c == ' ' || c == '#')
+        {
+            continue;
+        }
+        let bytes = line.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'#' {
+                // Tag must start at line start or after whitespace / punctuation
+                let prev_ok = i == 0
+                    || matches!(
+                        bytes[i - 1],
+                        b' ' | b'\t' | b'(' | b'[' | b',' | b':' | b';' | b'>'
+                    );
+                if !prev_ok {
+                    i += 1;
+                    continue;
+                }
+                let start = i + 1;
+                let mut end = start;
+                while end < bytes.len() {
+                    let c = bytes[end];
+                    if c.is_ascii_alphanumeric() || c == b'-' || c == b'_' || c == b'/' {
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if end > start {
+                    let tag = &line[start..end];
+                    if !is_hex_color(tag) && !tag.starts_with(['/']) && !tag.ends_with(['/']) {
+                        emit(tag, (idx as u32) + 1, line);
+                    }
+                }
+                i = end.max(i + 1);
+            } else {
+                i += 1;
+            }
+        }
+    }
+}
+
+fn is_hex_color(s: &str) -> bool {
+    matches!(s.len(), 3 | 4 | 6 | 8) && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// Create a new empty file under an allowed directory. Used by the
 /// "click unresolved wiki link" → create-file flow. Refuses to overwrite.
 #[tauri::command]
@@ -1505,6 +1651,7 @@ pub fn run() {
             list_files_recursive,
             search_in_dir,
             create_text_file,
+            extract_tags,
             load_settings,
             save_settings,
             pty_spawn,
@@ -1840,6 +1987,56 @@ mod tests {
         assert!(t.starts_with('…'));
         assert!(t.ends_with('…'));
         assert_eq!(&t[p..p + 5], "MATCH");
+    }
+
+    // ── tag extraction ──
+
+    fn collect_tags(src: &str) -> Vec<(String, u32)> {
+        let mut out = Vec::new();
+        extract_tags_from_text(src, |t, l, _| out.push((t.to_string(), l)));
+        out
+    }
+
+    #[test]
+    fn extracts_simple_tag() {
+        let hits = collect_tags("see #rust and #python");
+        assert_eq!(
+            hits,
+            vec![("rust".to_string(), 1), ("python".to_string(), 1)]
+        );
+    }
+
+    #[test]
+    fn extracts_nested_tag() {
+        let hits = collect_tags("topic: #lang/rust here");
+        assert_eq!(hits, vec![("lang/rust".to_string(), 1)]);
+    }
+
+    #[test]
+    fn skips_atx_heading_marker() {
+        // `# heading` is a heading, not a tag.
+        let hits = collect_tags("# heading\n## still a heading\n#realtag here");
+        assert_eq!(hits, vec![("realtag".to_string(), 3)]);
+    }
+
+    #[test]
+    fn skips_inside_fenced_code_block() {
+        let src = "before #t1\n```\n#fake\n```\n#t2";
+        let hits = collect_tags(src);
+        assert_eq!(hits, vec![("t1".to_string(), 1), ("t2".to_string(), 5)]);
+    }
+
+    #[test]
+    fn rejects_hex_colors() {
+        let hits = collect_tags("color: #ff0 and #deadbeef and #realone");
+        assert_eq!(hits, vec![("realone".to_string(), 1)]);
+    }
+
+    #[test]
+    fn rejects_tag_attached_to_word() {
+        // `foo#bar` shouldn't be a tag — `#` must follow whitespace/punct.
+        let hits = collect_tags("foo#nope and #yes");
+        assert_eq!(hits, vec![("yes".to_string(), 1)]);
     }
 
     // ── validate_pty_tool tests ──

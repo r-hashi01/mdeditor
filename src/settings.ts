@@ -21,6 +21,7 @@ export interface AppSettings {
   previewLineHeight: number;
   showLineNumbers: boolean;
   showToc: boolean;
+  vimMode: boolean;
   lastOpenedFolder: string | null;
   recentFolders: string[];
 }
@@ -34,6 +35,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   previewLineHeight: 1.7,
   showLineNumbers: true,
   showToc: true,
+  vimMode: false,
   lastOpenedFolder: null,
   recentFolders: [],
 };
@@ -49,6 +51,7 @@ export function sanitizeSettings(raw: Record<string, unknown>): Partial<AppSetti
   if (typeof raw.previewLineHeight === "number" && raw.previewLineHeight > 0) safe.previewLineHeight = raw.previewLineHeight;
   if (typeof raw.showLineNumbers === "boolean") safe.showLineNumbers = raw.showLineNumbers;
   if (typeof raw.showToc === "boolean") safe.showToc = raw.showToc;
+  if (typeof raw.vimMode === "boolean") safe.vimMode = raw.vimMode;
   if (raw.lastOpenedFolder === null || typeof raw.lastOpenedFolder === "string") safe.lastOpenedFolder = raw.lastOpenedFolder as string | null;
   if (Array.isArray(raw.recentFolders) && raw.recentFolders.every((f: unknown) => typeof f === "string")) {
     safe.recentFolders = raw.recentFolders as string[];
