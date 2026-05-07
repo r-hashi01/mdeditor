@@ -141,6 +141,246 @@ fn is_dir_allowed(path: &str, state: &State<'_, AllowedDirs>) -> Result<String, 
     }
 }
 
+/// Default file-extension allow-list for project-wide search and recursive
+/// file listing. Keeps `target/`, `node_modules/` binaries, lockfiles etc.
+/// out of results without requiring the frontend to filter.
+const SEARCHABLE_EXTS: &[&str] = &[
+    "md", "markdown", "txt", "log", "csv", "tsv",
+    "ts", "tsx", "js", "jsx", "mjs", "cjs",
+    "rs", "py", "go", "java", "kt", "swift", "rb", "php", "c", "h", "cpp", "hpp",
+    "json", "yaml", "yml", "toml", "xml", "html", "htm", "css", "scss", "sass",
+    "sh", "bash", "zsh", "fish",
+];
+
+const SKIP_DIR_NAMES: &[&str] = &[
+    "node_modules", "target", "dist", "build", ".next", ".turbo",
+    ".cache", "out", "vendor", ".venv", "venv", "__pycache__",
+];
+
+const MAX_SEARCH_RESULTS: usize = 500;
+const MAX_FILE_LIST_RESULTS: usize = 20000;
+const MAX_SEARCH_FILE_BYTES: u64 = 2 * 1024 * 1024;
+
+fn has_searchable_ext(name: &str) -> bool {
+    let dot = match name.rfind('.') {
+        Some(d) => d,
+        None => return false,
+    };
+    let ext = &name[dot + 1..].to_ascii_lowercase();
+    SEARCHABLE_EXTS.iter().any(|e| *e == ext.as_str())
+}
+
+fn should_skip_dir(name: &str) -> bool {
+    if name.starts_with('.') {
+        return true;
+    }
+    SKIP_DIR_NAMES.iter().any(|s| *s == name)
+}
+
+#[derive(serde::Serialize)]
+struct ProjectFile {
+    name: String,
+    path: String,
+    /// Path relative to the search root (POSIX-style separators).
+    rel: String,
+}
+
+/// List every searchable file under an allowed directory (recursively).
+/// Used by quick-open (Cmd+P) for fuzzy file matching.
+#[tauri::command]
+fn list_files_recursive(
+    path: String,
+    state: State<'_, AllowedDirs>,
+) -> Result<Vec<ProjectFile>, String> {
+    validate_path(&path)?;
+    let canonical = is_dir_allowed(&path, &state)?;
+    let root = std::path::PathBuf::from(&canonical);
+    let mut out: Vec<ProjectFile> = Vec::new();
+    let mut stack: Vec<std::path::PathBuf> = vec![root.clone()];
+
+    while let Some(dir) = stack.pop() {
+        if out.len() >= MAX_FILE_LIST_RESULTS {
+            break;
+        }
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let entry_path = entry.path();
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if metadata.is_dir() {
+                if should_skip_dir(&name) {
+                    continue;
+                }
+                stack.push(entry_path);
+            } else if metadata.is_file() {
+                if !has_searchable_ext(&name) {
+                    continue;
+                }
+                let path_str = entry_path.to_string_lossy().to_string();
+                let rel = entry_path
+                    .strip_prefix(&root)
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_else(|_| name.clone());
+                out.push(ProjectFile {
+                    name,
+                    path: path_str,
+                    rel,
+                });
+                if out.len() >= MAX_FILE_LIST_RESULTS {
+                    break;
+                }
+            }
+        }
+    }
+
+    out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
+    Ok(out)
+}
+
+#[derive(serde::Serialize)]
+struct SearchHit {
+    path: String,
+    rel: String,
+    line: u32,
+    /// Line content (trimmed at boundaries for very long lines).
+    text: String,
+    /// Byte offset of the match within `text`.
+    match_start: u32,
+    match_end: u32,
+}
+
+/// Plain-text (case-insensitive optional) substring search across an allowed directory.
+#[tauri::command]
+fn search_in_dir(
+    path: String,
+    query: String,
+    case_sensitive: Option<bool>,
+    state: State<'_, AllowedDirs>,
+) -> Result<Vec<SearchHit>, String> {
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    if query.len() > 256 {
+        return Err("Query too long".to_string());
+    }
+    validate_path(&path)?;
+    let canonical = is_dir_allowed(&path, &state)?;
+    let root = std::path::PathBuf::from(&canonical);
+    let case_sensitive = case_sensitive.unwrap_or(false);
+    let needle: String = if case_sensitive {
+        query.clone()
+    } else {
+        query.to_lowercase()
+    };
+
+    let mut hits: Vec<SearchHit> = Vec::new();
+    let mut stack: Vec<std::path::PathBuf> = vec![root.clone()];
+    let mut buf = String::with_capacity(8192);
+
+    'outer: while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            if hits.len() >= MAX_SEARCH_RESULTS {
+                break 'outer;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let entry_path = entry.path();
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if metadata.is_dir() {
+                if should_skip_dir(&name) {
+                    continue;
+                }
+                stack.push(entry_path);
+                continue;
+            }
+            if !metadata.is_file() {
+                continue;
+            }
+            if metadata.len() > MAX_SEARCH_FILE_BYTES {
+                continue;
+            }
+            if !has_searchable_ext(&name) {
+                continue;
+            }
+
+            buf.clear();
+            if fs::File::open(&entry_path)
+                .and_then(|mut f| f.read_to_string(&mut buf))
+                .is_err()
+            {
+                continue;
+            }
+
+            let rel = entry_path
+                .strip_prefix(&root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| name.clone());
+            let path_str = entry_path.to_string_lossy().to_string();
+
+            for (idx, line) in buf.lines().enumerate() {
+                let haystack: std::borrow::Cow<'_, str> = if case_sensitive {
+                    std::borrow::Cow::Borrowed(line)
+                } else {
+                    std::borrow::Cow::Owned(line.to_lowercase())
+                };
+                let Some(pos) = haystack.find(&needle) else {
+                    continue;
+                };
+                // Trim very long lines to a window around the match for UI sanity.
+                let (text, adj) = trim_line_around(line, pos, query.len());
+                hits.push(SearchHit {
+                    path: path_str.clone(),
+                    rel: rel.clone(),
+                    line: (idx as u32) + 1,
+                    text,
+                    match_start: adj as u32,
+                    match_end: (adj + query.len()) as u32,
+                });
+                if hits.len() >= MAX_SEARCH_RESULTS {
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    Ok(hits)
+}
+
+/// Truncate a line to ~200 chars centered on the match, returning the new
+/// (text, adjusted_match_start). Slices on char boundaries.
+fn trim_line_around(line: &str, match_byte: usize, match_len: usize) -> (String, usize) {
+    const MAX_LEN: usize = 200;
+    if line.len() <= MAX_LEN {
+        return (line.to_string(), match_byte);
+    }
+    let context = (MAX_LEN.saturating_sub(match_len)) / 2;
+    let mut start = match_byte.saturating_sub(context);
+    while start > 0 && !line.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = (match_byte + match_len + context).min(line.len());
+    while end < line.len() && !line.is_char_boundary(end) {
+        end += 1;
+    }
+    let prefix = if start > 0 { "…" } else { "" };
+    let suffix = if end < line.len() { "…" } else { "" };
+    let snippet = format!("{}{}{}", prefix, &line[start..end], suffix);
+    let new_match_start = prefix.len() + (match_byte - start);
+    (snippet, new_match_start)
+}
+
 #[tauri::command]
 fn list_directory(path: String, state: State<'_, AllowedDirs>) -> Result<Vec<DirEntry>, String> {
     validate_path(&path)?;
@@ -1235,6 +1475,8 @@ pub fn run() {
             allow_dir,
             reopen_dir,
             list_directory,
+            list_files_recursive,
+            search_in_dir,
             load_settings,
             save_settings,
             pty_spawn,
@@ -1535,6 +1777,41 @@ mod tests {
     fn nested_allowed_path_still_passes() {
         // /tmp is NOT in the blocked list; nested paths are fine.
         assert!(validate_path("/tmp/notes/subdir/file.md").is_ok());
+    }
+
+    // ── search helpers ──
+
+    #[test]
+    fn searchable_ext_matches_known_types() {
+        assert!(has_searchable_ext("foo.md"));
+        assert!(has_searchable_ext("README.MD"));
+        assert!(has_searchable_ext("a.ts"));
+        assert!(!has_searchable_ext("image.png"));
+        assert!(!has_searchable_ext("noext"));
+    }
+
+    #[test]
+    fn skip_dir_includes_node_modules_and_hidden() {
+        assert!(should_skip_dir("node_modules"));
+        assert!(should_skip_dir(".git"));
+        assert!(should_skip_dir("target"));
+        assert!(!should_skip_dir("src"));
+    }
+
+    #[test]
+    fn trim_line_short_line_passthrough() {
+        let (t, p) = trim_line_around("hello world", 6, 5);
+        assert_eq!(t, "hello world");
+        assert_eq!(p, 6);
+    }
+
+    #[test]
+    fn trim_line_long_line_centers_match() {
+        let line = "a".repeat(500) + "MATCH" + &"b".repeat(500);
+        let (t, p) = trim_line_around(&line, 500, 5);
+        assert!(t.starts_with('…'));
+        assert!(t.ends_with('…'));
+        assert_eq!(&t[p..p + 5], "MATCH");
     }
 
     // ── validate_pty_tool tests ──
