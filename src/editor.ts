@@ -11,6 +11,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorState, StateField, Compartment, Prec, RangeSetBuilder, StateEffect, type Extension } from "@codemirror/state";
 import { LanguageDescription } from "@codemirror/language";
 import { openSearchPanel } from "@codemirror/search";
+import { wikiLinkAutocomplete } from "./wiki-autocomplete";
 /** Languages available inside Markdown fenced code blocks.
  *  Each entry dynamic-imports its grammar only when the fenced block's lang is matched,
  *  so unused grammars don't bloat the initial bundle. */
@@ -374,6 +375,7 @@ export function createEditor(
   sharedExtensions = [
     basicSetup,
     replaceKeymap,
+    wikiLinkAutocomplete,
     languageCompartment.of(currentLanguage),
     themeCompartment.of(currentTheme),
     fontCompartment.of([]),
