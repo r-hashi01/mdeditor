@@ -2422,3 +2422,100 @@ body {
 .te-insert-btn:hover {
   opacity: 0.85;
 }
+
+/* ── Palette (command palette / quick open / project search) ─────────── */
+
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: none;
+  z-index: 1000;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+.palette-overlay.visible {
+  display: flex;
+}
+.palette-modal {
+  width: min(640px, 92vw);
+  max-height: 70vh;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.palette-input {
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--text-primary);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  outline: none;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.palette-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+.palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+.palette-item {
+  padding: 6px 14px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.palette-item.active {
+  background: var(--border);
+  border-left-color: var(--accent);
+}
+.palette-item-primary {
+  color: var(--text-primary);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.palette-item-secondary {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--editor-font-family);
+}
+.palette-item mark {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+.palette-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.palette-shortcut {
+  float: right;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: var(--editor-font-family);
+  opacity: 0.7;
+}
+.palette-line {
+  color: var(--accent);
+  margin-left: 4px;
+}
