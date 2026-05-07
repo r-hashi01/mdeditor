@@ -2,6 +2,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Marked } from "marked";
 import DOMPurify from "dompurify";
 import { mathExtensions, MATH_DOMPURIFY_ATTRS, renderMathInDom } from "./math-renderer";
+import { wikiLinkExtensions, WIKI_DOMPURIFY_ATTRS, resolveWikiLinksInDom } from "./wiki-links";
 import hljs from "highlight.js/lib/core";
 import type { EditorView } from "codemirror";
 import { escapeHtml } from "./html-utils";
@@ -384,7 +385,7 @@ const marked = new Marked({
       return `<pre><code class="hljs language-${language}">${highlighted}</code></pre>`;
     },
   },
-  extensions: mathExtensions,
+  extensions: [...mathExtensions, ...wikiLinkExtensions],
   gfm: true,
   breaks: false,
 });
@@ -925,9 +926,9 @@ export function renderPreview(
     const markdownBody = fm ? fm.body : content;
 
     const raw = marked.parse(markdownBody) as string;
-    // DOMPurify: allow mermaid + math placeholders through
+    // DOMPurify: allow mermaid + math + wiki-link placeholders through
     const clean = DOMPurify.sanitize(raw, {
-      ADD_ATTR: ["data-mermaid-id", ...MATH_DOMPURIFY_ATTRS],
+      ADD_ATTR: ["data-mermaid-id", ...MATH_DOMPURIFY_ATTRS, ...WIKI_DOMPURIFY_ATTRS],
     });
     container.innerHTML = clean;
 
@@ -941,6 +942,10 @@ export function renderPreview(
     // KaTeX: replace math placeholders with rendered math (after annotation
     // so data-source-line attributes are already in place).
     renderMathInDom(container);
+
+    // Wiki links: resolve `[[target]]` against the vault index. Must run
+    // every render so newly-added vault entries become live links.
+    resolveWikiLinksInDom(container);
 
     // Resolve local image paths to asset protocol URLs
     resolveLocalImages(container, filePath ?? null);
