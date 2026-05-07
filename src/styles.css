@@ -2519,3 +2519,18 @@ body {
   color: var(--accent);
   margin-left: 4px;
 }
+
+/* ── Math (KaTeX) ───────────────────────────────────────────────────── */
+
+.math-error {
+  color: #f38ba8;
+  font-family: var(--editor-font-family);
+  font-size: 0.85em;
+  background: rgba(243, 139, 168, 0.08);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.math-block {
+  margin: 12px 0;
+  overflow-x: auto;
+}

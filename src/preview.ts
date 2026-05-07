@@ -1,6 +1,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Marked } from "marked";
 import DOMPurify from "dompurify";
+import { mathExtensions, MATH_DOMPURIFY_ATTRS, renderMathInDom } from "./math-renderer";
 import hljs from "highlight.js/lib/core";
 import type { EditorView } from "codemirror";
 import { escapeHtml } from "./html-utils";
@@ -383,6 +384,7 @@ const marked = new Marked({
       return `<pre><code class="hljs language-${language}">${highlighted}</code></pre>`;
     },
   },
+  extensions: mathExtensions,
   gfm: true,
   breaks: false,
 });
@@ -923,15 +925,22 @@ export function renderPreview(
     const markdownBody = fm ? fm.body : content;
 
     const raw = marked.parse(markdownBody) as string;
-    // DOMPurify: allow mermaid placeholders through
+    // DOMPurify: allow mermaid + math placeholders through
     const clean = DOMPurify.sanitize(raw, {
-      ADD_ATTR: ["data-mermaid-id"],
+      ADD_ATTR: ["data-mermaid-id", ...MATH_DOMPURIFY_ATTRS],
     });
     container.innerHTML = clean;
 
-    // Post-process: add heading IDs, source-line tracking, editable markers
+    // Post-process: add heading IDs, source-line tracking, editable markers.
+    // Math placeholders stay intact here so the source-line tracker sees the
+    // original `<span class="math-inline">` wrappers without their KaTeX
+    // children obscuring the structure.
     annotatePreviewElements(container);
     annotateTableCells(container, sourceLines);
+
+    // KaTeX: replace math placeholders with rendered math (after annotation
+    // so data-source-line attributes are already in place).
+    renderMathInDom(container);
 
     // Resolve local image paths to asset protocol URLs
     resolveLocalImages(container, filePath ?? null);
