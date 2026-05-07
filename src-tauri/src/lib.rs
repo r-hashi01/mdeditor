@@ -247,7 +247,7 @@ fn list_files_recursive(
         }
     }
 
-    out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
+    out.sort_by_key(|a| a.rel.to_lowercase());
     Ok(out)
 }
 
