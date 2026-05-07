@@ -49,7 +49,7 @@ body:
     attributes:
       label: Logs / screenshots
       description: |
-        Dev-tools console output, terminal logs from `bun run tauri dev`, or screenshots.
+        Dev-tools console output, terminal logs from `pnpm run tauri dev`, or screenshots.
       render: shell
   - type: checkboxes
     id: sanity

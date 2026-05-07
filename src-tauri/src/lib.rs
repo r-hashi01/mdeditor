@@ -145,16 +145,24 @@ fn is_dir_allowed(path: &str, state: &State<'_, AllowedDirs>) -> Result<String, 
 /// file listing. Keeps `target/`, `node_modules/` binaries, lockfiles etc.
 /// out of results without requiring the frontend to filter.
 const SEARCHABLE_EXTS: &[&str] = &[
-    "md", "markdown", "txt", "log", "csv", "tsv",
-    "ts", "tsx", "js", "jsx", "mjs", "cjs",
-    "rs", "py", "go", "java", "kt", "swift", "rb", "php", "c", "h", "cpp", "hpp",
-    "json", "yaml", "yml", "toml", "xml", "html", "htm", "css", "scss", "sass",
-    "sh", "bash", "zsh", "fish",
+    "md", "markdown", "txt", "log", "csv", "tsv", "ts", "tsx", "js", "jsx", "mjs", "cjs", "rs",
+    "py", "go", "java", "kt", "swift", "rb", "php", "c", "h", "cpp", "hpp", "json", "yaml", "yml",
+    "toml", "xml", "html", "htm", "css", "scss", "sass", "sh", "bash", "zsh", "fish",
 ];
 
 const SKIP_DIR_NAMES: &[&str] = &[
-    "node_modules", "target", "dist", "build", ".next", ".turbo",
-    ".cache", "out", "vendor", ".venv", "venv", "__pycache__",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    ".cache",
+    "out",
+    "vendor",
+    ".venv",
+    "venv",
+    "__pycache__",
 ];
 
 const MAX_SEARCH_RESULTS: usize = 500;
@@ -167,14 +175,14 @@ fn has_searchable_ext(name: &str) -> bool {
         None => return false,
     };
     let ext = &name[dot + 1..].to_ascii_lowercase();
-    SEARCHABLE_EXTS.iter().any(|e| *e == ext.as_str())
+    SEARCHABLE_EXTS.contains(&ext.as_str())
 }
 
 fn should_skip_dir(name: &str) -> bool {
     if name.starts_with('.') {
         return true;
     }
-    SKIP_DIR_NAMES.iter().any(|s| *s == name)
+    SKIP_DIR_NAMES.contains(&name)
 }
 
 #[derive(serde::Serialize)]
@@ -239,7 +247,7 @@ fn list_files_recursive(
         }
     }
 
-    out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
+    out.sort_by_key(|a| a.rel.to_lowercase());
     Ok(out)
 }
 
@@ -384,10 +392,7 @@ fn trim_line_around(line: &str, match_byte: usize, match_len: usize) -> (String,
 /// Create a new empty file under an allowed directory. Used by the
 /// "click unresolved wiki link" → create-file flow. Refuses to overwrite.
 #[tauri::command]
-fn create_text_file(
-    path: String,
-    state: State<'_, AllowedDirs>,
-) -> Result<(), String> {
+fn create_text_file(path: String, state: State<'_, AllowedDirs>) -> Result<(), String> {
     validate_path(&path)?;
     let parent = Path::new(&path)
         .parent()

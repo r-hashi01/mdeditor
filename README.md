@@ -92,14 +92,14 @@ Auto-update artifacts are signed with minisign; the embedded public key rejects 
 
 ### Developers
 
-If you want to run from source, install [Bun](https://bun.sh/), [Rust](https://www.rust-lang.org/tools/install), and the platform-specific [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), then run:
+If you want to run from source, install [pnpm](https://pnpm.io/), [Rust](https://www.rust-lang.org/tools/install), and the platform-specific [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), then run:
 
 ```bash
-bun install
-bun run tauri dev
+pnpm install
+pnpm run tauri dev
 ```
 
-Use `bun run dev` if you only want the browser-side Vite app.
+Use `pnpm run dev` if you only want the browser-side Vite app.
 
 ## Security model
 
@@ -121,26 +121,26 @@ Full threat model and reporting policy: [SECURITY.md](SECURITY.md).
 
 ### Prerequisites
 
-- [Bun](https://bun.sh/) (package manager + test runner)
+- [pnpm](https://pnpm.io/) (package manager) + [Node.js](https://nodejs.org/) 20+
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
 - Platform-specific Tauri prerequisites — [tauri.app docs](https://v2.tauri.app/start/prerequisites/)
 
 ### Common tasks
 
 ```bash
-bun install            # install frontend deps
-bun run tauri dev      # launch the Tauri desktop app (Rust + WebView)
-bun run dev            # frontend-only dev server (http://localhost:5173)
-bun run build          # production frontend build
-bun run tauri build    # bundle a release installer for the current platform
-bun run clean          # remove dist/ and Rust build artifacts
+pnpm install           # install frontend deps
+pnpm run tauri dev     # launch the Tauri desktop app (Rust + WebView)
+pnpm run dev           # frontend-only dev server (http://localhost:5173)
+pnpm run build         # production frontend build
+pnpm run tauri build   # bundle a release installer for the current platform
+pnpm run clean         # remove dist/ and Rust build artifacts
 ```
 
 ### Tests
 
 ```bash
-bun run test                  # Vitest — frontend unit tests
-bun run test:watch            # Vitest watch mode
+pnpm run test                 # Vitest — frontend unit tests
+pnpm run test:watch           # Vitest watch mode
 cd src-tauri && cargo test    # Rust unit tests (path validation, atomic write)
 ```
 
