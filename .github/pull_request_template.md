@@ -8,11 +8,11 @@
 
 ## Testing
 
-- [ ] `bun run test` passes
+- [ ] `pnpm run test` passes
 - [ ] `cd src-tauri && cargo test --lib` passes
-- [ ] `bun x tsc --noEmit` clean
+- [ ] `pnpm exec tsc --noEmit` clean
 - [ ] `cargo fmt --check` + `cargo clippy -D warnings` clean
-- [ ] Manually verified in `bun run tauri dev` (describe below if UI-affecting)
+- [ ] Manually verified in `pnpm run tauri dev` (describe below if UI-affecting)
 
 <!-- Describe any manual verification steps, platforms tested, edge cases. -->
 
@@ -28,4 +28,4 @@
 - [ ] Conventional Commit title (`feat:`, `fix(ci):`, …)
 - [ ] CHANGELOG.md updated under `## [Unreleased]` for user-facing changes
 - [ ] New pure logic has a Vitest or cargo unit test
-- [ ] No direct edits to `bun.lock` or `Cargo.lock`
+- [ ] No direct edits to `pnpm-lock.yaml` or `Cargo.lock`

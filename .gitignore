@@ -12,3 +12,4 @@ package-lock.json
 !docs/screenshots/*.png
 .playwright-mcp/
 .claude/settings.local.json
+.claude/*.md
