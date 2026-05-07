@@ -1,11 +1,9 @@
 /**
  * Vault index — keeps an in-memory map of every markdown/text file in the
- * currently open folder, plus a backlinks index. Drives wiki-link
- * resolution, autocomplete, and the backlinks panel.
+ * currently open folder. Drives wiki-link resolution and autocomplete.
  *
  * The index is rebuilt whenever the user opens a folder, and refreshed
- * after a save (lazily — we only rebuild backlinks on demand for the
- * active file rather than the whole vault).
+ * after a save (so newly-added files become valid link targets).
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -14,14 +12,6 @@ export interface VaultFile {
   name: string;
   path: string;
   rel: string;
-}
-
-export interface BacklinkHit {
-  target: string;
-  from: string;
-  from_rel: string;
-  line: number;
-  snippet: string;
 }
 
 export interface VaultIndex {
@@ -33,16 +23,6 @@ export interface VaultIndex {
   byRel: Map<string, VaultFile>;
   /** Lowercase basename without extension → first file (case-insensitive). */
   byBaseName: Map<string, VaultFile>;
-  /** All wiki link occurrences, flat list. */
-  backlinks: BacklinkHit[];
-  /** Lowercase resolved-target → backlinks pointing at it. */
-  backlinksByTarget: Map<string, BacklinkHit[]>;
-}
-
-export interface VaultDeps {
-  getRoot: () => string | null;
-  /** Called whenever the index is rebuilt (so listeners can refresh UI). */
-  onChange: () => void;
 }
 
 let current: VaultIndex | null = null;
@@ -52,10 +32,7 @@ export function getVault(): VaultIndex | null {
 }
 
 export async function rebuildVault(root: string): Promise<VaultIndex> {
-  const [files, backlinks] = await Promise.all([
-    invoke<VaultFile[]>("list_files_recursive", { path: root }),
-    invoke<BacklinkHit[]>("build_backlinks_index", { path: root }).catch(() => [] as BacklinkHit[]),
-  ]);
+  const files = await invoke<VaultFile[]>("list_files_recursive", { path: root });
   const byRel = new Map<string, VaultFile>();
   const byBaseName = new Map<string, VaultFile>();
   for (const f of files) {
@@ -65,20 +42,7 @@ export async function rebuildVault(root: string): Promise<VaultIndex> {
       byBaseName.set(stem, f);
     }
   }
-  // Group backlinks by their resolved target (lowercase). We resolve here
-  // once so the panel doesn't have to re-resolve per query.
-  const backlinksByTarget = new Map<string, BacklinkHit[]>();
-  for (const b of backlinks) {
-    const resolvedKey = resolveTargetKey(b.target, byRel, byBaseName);
-    if (!resolvedKey) continue;
-    let list = backlinksByTarget.get(resolvedKey);
-    if (!list) {
-      list = [];
-      backlinksByTarget.set(resolvedKey, list);
-    }
-    list.push(b);
-  }
-  current = { root, files, byRel, byBaseName, backlinks, backlinksByTarget };
+  current = { root, files, byRel, byBaseName };
   return current;
 }
 
@@ -118,22 +82,6 @@ function resolveAgainst(
   const byStem = byBaseName.get(stem);
   if (byStem) return byStem;
   return null;
-}
-
-/** Internal: stable key used to group backlinks by resolved target. */
-function resolveTargetKey(
-  target: string,
-  byRel: Map<string, VaultFile>,
-  byBaseName: Map<string, VaultFile>,
-): string | null {
-  const f = resolveAgainst(target, byRel, byBaseName);
-  return f ? f.path.toLowerCase() : null;
-}
-
-/** Look up backlinks for a given absolute file path. */
-export function getBacklinksFor(filePath: string): BacklinkHit[] {
-  if (!current) return [];
-  return current.backlinksByTarget.get(filePath.toLowerCase()) ?? [];
 }
 
 /** Strip a single trailing extension. "foo.bar.md" → "foo.bar". */
