@@ -14,6 +14,12 @@ import { createTableEditor } from "./table-editor";
 import { createWelcome, addRecentFolder } from "./welcome";
 import { basename } from "./path-utils";
 import { createAiPane } from "./ai-pane";
+import { createCommandPalette, type Command } from "./command-palette";
+import { createQuickOpen } from "./quick-open";
+import { createProjectSearch } from "./project-search";
+import { rebuildVault, clearVault, newNotePathForTarget } from "./vault";
+import { invoke } from "@tauri-apps/api/core";
+import { EditorView } from "@codemirror/view";
 import { undo, redo } from "@codemirror/commands";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -435,6 +441,119 @@ async function init(): Promise<void> {
     tableEditor.show();
   });
 
+  // ── Navigation palettes (P0-1/2/3) ──
+  // Open a file from a palette result. If the file is already inside the
+  // current vault, the existing tabManager + sandbox path validation handles
+  // it; otherwise fall back to allow_path via openFile (rare path).
+  async function openFileByPath(filePath: string): Promise<void> {
+    try {
+      const result = await openFileFromTree(filePath);
+      tabManager.openFile(result.path, result.content, result.binary);
+      if (currentFolderPath && result.path.startsWith(currentFolderPath)) {
+        fileTree.setSelectedFile(result.path);
+      }
+    } catch (e) {
+      console.error("Failed to open file from palette:", e);
+    }
+  }
+
+  function jumpToLine(line: number): void {
+    const doc = editor.state.doc;
+    const clampedLine = Math.max(1, Math.min(doc.lines, line));
+    const pos = doc.line(clampedLine).from;
+    editor.dispatch({
+      selection: { anchor: pos },
+      effects: EditorView.scrollIntoView(pos, { y: "center" }),
+    });
+    editor.focus();
+  }
+
+  const quickOpen = createQuickOpen({
+    getRoot: () => currentFolderPath,
+    onPick: (path) => { void openFileByPath(path); },
+  });
+
+  const projectSearch = createProjectSearch({
+    getRoot: () => currentFolderPath,
+    onPick: async (path, line) => {
+      await openFileByPath(path);
+      // Wait one frame so the new editor state is in place before jumping.
+      requestAnimationFrame(() => jumpToLine(line));
+    },
+  });
+
+  /** Rebuild the vault index and refresh the preview so wiki links resolve. */
+  async function refreshVault(): Promise<void> {
+    if (!currentFolderPath) {
+      clearVault();
+      return;
+    }
+    try {
+      await rebuildVault(currentFolderPath);
+    } catch (e) {
+      console.warn("Vault rebuild failed:", e);
+    }
+    const activeTab = tabManager.getActiveTab();
+    if (activeTab) {
+      const content = activeTab.editorState.doc.toString();
+      renderPreview(previewPane, content, activeTab.filePath, currentSettings.showToc);
+    }
+  }
+
+  // Wiki-link click handler: open resolved targets, prompt to create unresolved.
+  previewPane.addEventListener("click", (e) => {
+    const target = (e.target as HTMLElement | null)?.closest<HTMLAnchorElement>("a.wikilink");
+    if (!target) return;
+    e.preventDefault();
+    const resolved = target.getAttribute("data-wiki-resolved");
+    if (resolved) {
+      void openFileByPath(resolved);
+      return;
+    }
+    const wiki = target.getAttribute("data-wiki-target");
+    if (!wiki || !currentFolderPath) return;
+    void confirmCreateUnresolved(wiki);
+  });
+
+  async function confirmCreateUnresolved(wikiTarget: string): Promise<void> {
+    if (!currentFolderPath) return;
+    const activeTab = tabManager.getActiveTab();
+    const newPath = newNotePathForTarget(wikiTarget, activeTab?.filePath ?? null, currentFolderPath);
+    const ok = await ask(
+      `"${wikiTarget}" doesn't exist yet.\nCreate ${newPath.split(/[/\\]/).pop()} now?`,
+      { title: "Create new note", kind: "info" },
+    );
+    if (!ok) return;
+    try {
+      await invoke("create_text_file", { path: newPath });
+      await refreshVault();
+      await openFileByPath(newPath);
+    } catch (e) {
+      console.error("Create note failed:", e);
+    }
+  }
+
+  const isMac = navigator.platform.toLowerCase().includes("mac");
+  const modKey = isMac ? "Cmd" : "Ctrl";
+
+  const commandPalette = createCommandPalette((): Command[] => [
+    { id: "file.new", title: "New File", shortcut: `${modKey}+N`, run: () => tabManager.newTab() },
+    { id: "file.open", title: "Open File…", shortcut: `${modKey}+O`, run: () => { void handleOpen(); } },
+    { id: "file.openFolder", title: "Open Folder…", shortcut: `${modKey}+Shift+O`, run: () => { void handleOpenFolder(); } },
+    { id: "file.save", title: "Save", shortcut: `${modKey}+S`, run: () => { void handleSave(); } },
+    { id: "file.closeTab", title: "Close Tab", shortcut: `${modKey}+W`, run: () => tabManager.closeActiveTab() },
+    { id: "view.code", title: "View: Code Only", shortcut: `${modKey}+1`, run: () => { setViewMode("code"); markdownViewMode = "code"; } },
+    { id: "view.split", title: "View: Split", shortcut: `${modKey}+2`, run: () => { setViewMode("split"); markdownViewMode = "split"; } },
+    { id: "view.preview", title: "View: Preview Only", shortcut: `${modKey}+3`, run: () => { setViewMode("preview"); markdownViewMode = "preview"; } },
+    { id: "view.toggleSidebar", title: "Toggle File Tree", shortcut: `${modKey}+B`, run: () => { fileTree.toggle(); folderBtn.classList.toggle("active", fileTree.isVisible()); } },
+    { id: "view.toggleAi", title: "Toggle AI Pane", shortcut: `${modKey}+J`, run: () => { const v = aiPane.toggle(); aiPaneBtn.classList.toggle("active", v); } },
+    { id: "nav.quickOpen", title: "Go to File…", shortcut: `${modKey}+P`, run: () => quickOpen.show() },
+    { id: "nav.projectSearch", title: "Search in Project…", shortcut: `${modKey}+Shift+F`, run: () => projectSearch.show() },
+    { id: "edit.insertTable", title: "Insert Table…", run: () => tableEditor.show() },
+    { id: "app.settings", title: "Open Settings…", run: () => modal.show() },
+    { id: "app.checkUpdates", title: "Check for Updates", run: () => { void checkForUpdates(); } },
+  ]);
+
   // ── File & folder handlers ──
   async function handleOpen(): Promise<void> {
     try {
@@ -458,6 +577,7 @@ async function init(): Promise<void> {
       await fileTree.openFolder(folder);
       folderBtn.classList.add("active");
       aiPane.setCwd(folder);
+      void refreshVault();
       // Persist to recent folders
       currentSettings.recentFolders = addRecentFolder(currentSettings.recentFolders, folder);
       currentSettings.lastOpenedFolder = folder;
@@ -487,6 +607,7 @@ async function init(): Promise<void> {
     await fileTree.openFolder(folder);
     folderBtn.classList.add("active");
     aiPane.setCwd(folder);
+    void refreshVault();
     currentSettings.recentFolders = addRecentFolder(currentSettings.recentFolders, folder);
     currentSettings.lastOpenedFolder = folder;
     debouncedSave(currentSettings);
@@ -502,6 +623,10 @@ async function init(): Promise<void> {
     if (savedPath) {
       tabManager.markSaved(savedPath, content);
       filenameEl.textContent = basename(savedPath);
+      // Refresh the vault index so newly-added/changed wiki links pick up.
+      if (currentFolderPath && savedPath.startsWith(currentFolderPath)) {
+        void refreshVault();
+      }
     }
   }
 
@@ -568,9 +693,25 @@ async function init(): Promise<void> {
       e.preventDefault();
       tabManager.newTab();
     }
-    if (mod && e.key === "o") {
+    if (mod && (e.key === "o" || e.key === "O")) {
       e.preventDefault();
-      handleOpen();
+      if (e.shiftKey) handleOpenFolder();
+      else handleOpen();
+    }
+    // Cmd/Ctrl+P → quick open file (suppress browser print dialog).
+    if (mod && !e.shiftKey && (e.key === "p" || e.key === "P")) {
+      e.preventDefault();
+      quickOpen.show();
+    }
+    // Cmd/Ctrl+Shift+P → command palette.
+    if (mod && e.shiftKey && (e.key === "p" || e.key === "P")) {
+      e.preventDefault();
+      commandPalette.show();
+    }
+    // Cmd/Ctrl+Shift+F → project-wide search.
+    if (mod && e.shiftKey && (e.key === "f" || e.key === "F")) {
+      e.preventDefault();
+      projectSearch.show();
     }
     if (mod && e.key === "s") {
       e.preventDefault();
@@ -580,7 +721,7 @@ async function init(): Promise<void> {
       e.preventDefault();
       tabManager.closeActiveTab();
     }
-    if (mod && e.key === "b") {
+    if (mod && !e.shiftKey && (e.key === "b" || e.key === "B")) {
       e.preventDefault();
       fileTree.toggle();
       folderBtn.classList.toggle("active", fileTree.isVisible());
