@@ -65,7 +65,12 @@ export function createFileTree(
     selectedPath = null;
 
     if (!container) return;
-    container.innerHTML = "";
+    // Only wipe our own previous root — leaves any sibling panels (e.g.
+    // the outline panel) mounted in the same sidebar untouched.
+    if (rootEl) {
+      rootEl.remove();
+      rootEl = null;
+    }
 
     rootEl = document.createElement("div");
     rootEl.className = "tree-root";
@@ -91,7 +96,9 @@ export function createFileTree(
     }
     rootEl.appendChild(header);
 
-    container.appendChild(rootEl);
+    // Insert tree at the top of the sidebar so any sibling panels (outline
+    // etc.) stay below it regardless of mount order in main.ts.
+    container.insertBefore(rootEl, container.firstChild);
 
     // Load and render top-level entries
     await loadAndRenderChildren(rootEl, folderPath);
