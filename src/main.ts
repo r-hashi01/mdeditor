@@ -19,6 +19,12 @@ import { createQuickOpen } from "./quick-open";
 import { createProjectSearch } from "./project-search";
 import { rebuildVault, clearVault, newNotePathForTarget } from "./vault";
 import { createOutlinePanel } from "./outline-panel";
+import { toggleFocusMode, toggleTypewriterMode, installTypewriterListener } from "./focus-mode";
+import { openDailyNote } from "./daily-note";
+import { listTemplates, readTemplate, substitute } from "./templates";
+import { exportHtml, exportPdf } from "./export";
+import { createFrontmatterEditor } from "./frontmatter-editor";
+import { createTagsPalette } from "./tags-palette";
 import { invoke } from "@tauri-apps/api/core";
 import { EditorView } from "@codemirror/view";
 import { undo, redo } from "@codemirror/commands";
@@ -231,6 +237,13 @@ async function init(): Promise<void> {
     },
   );
   fileTree.mount(sidebar);
+
+  installTypewriterListener(editor);
+
+  // Exit-focus button — visible only while focus mode is on (CSS-driven).
+  document.getElementById("btn-exit-focus")!.addEventListener("click", () => {
+    toggleFocusMode();
+  });
 
   // ── Outline panel (P0-7) ──
   // Mounted as a sibling of file-tree inside the sidebar. file-tree only
@@ -564,6 +577,62 @@ async function init(): Promise<void> {
   const isMac = navigator.platform.toLowerCase().includes("mac");
   const modKey = isMac ? "Cmd" : "Ctrl";
 
+  // ── P1-9 Tags palette ──
+  const tagsPalette = createTagsPalette({
+    getRoot: () => currentFolderPath,
+    onPick: async (path, line) => {
+      await openFileByPath(path);
+      requestAnimationFrame(() => jumpToLine(line));
+    },
+  });
+
+  // ── P1-12 Frontmatter editor ──
+  const frontmatterEditor = createFrontmatterEditor({
+    getDoc: () => getEditorContent(editor),
+    setDoc: (next) => {
+      editor.dispatch({
+        changes: { from: 0, to: editor.state.doc.length, insert: next },
+      });
+    },
+  });
+
+  // ── P1-11 Insert from template ──
+  async function insertFromTemplate(): Promise<void> {
+    const root = currentFolderPath;
+    if (!root) return;
+    let templates;
+    try {
+      templates = await listTemplates(root);
+    } catch {
+      return;
+    }
+    if (templates.length === 0) return;
+    // Re-use the palette primitive to pick a template.
+    const { createPalette } = await import("./palette");
+    const picker = createPalette<string>({
+      placeholder: "Pick a template…",
+      emptyMessage: "No templates in .templates/",
+      onQuery: () => templates.map((t) => ({ key: t.path, value: t.path, primary: t.name })),
+      onSelect: async (path) => {
+        try {
+          const raw = await readTemplate(path);
+          const activeTab = tabManager.getActiveTab();
+          const titleBase = activeTab?.filePath?.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "");
+          const { body, cursorOffset } = substitute(raw, { title: titleBase });
+          const at = editor.state.selection.main.head;
+          editor.dispatch({
+            changes: { from: at, insert: body },
+            selection: { anchor: at + cursorOffset },
+          });
+          editor.focus();
+        } finally {
+          picker.destroy();
+        }
+      },
+    });
+    picker.show();
+  }
+
   const commandPalette = createCommandPalette((): Command[] => [
     { id: "file.new", title: "New File", shortcut: `${modKey}+N`, run: () => tabManager.newTab() },
     { id: "file.open", title: "Open File…", shortcut: `${modKey}+O`, run: () => { void handleOpen(); } },
@@ -576,9 +645,33 @@ async function init(): Promise<void> {
     { id: "view.toggleSidebar", title: "Toggle File Tree", shortcut: `${modKey}+B`, run: () => { fileTree.toggle(); folderBtn.classList.toggle("active", fileTree.isVisible()); } },
     { id: "view.toggleOutline", title: "Toggle Outline", run: () => outlinePanel.toggle() },
     { id: "view.toggleAi", title: "Toggle AI Pane", shortcut: `${modKey}+J`, run: () => { const v = aiPane.toggle(); aiPaneBtn.classList.toggle("active", v); } },
+    { id: "view.focusMode", title: "Toggle Focus Mode", run: () => toggleFocusMode() },
+    { id: "view.typewriter", title: "Toggle Typewriter Mode", run: () => toggleTypewriterMode(editor) },
     { id: "nav.quickOpen", title: "Go to File…", shortcut: `${modKey}+P`, run: () => quickOpen.show() },
     { id: "nav.projectSearch", title: "Search in Project…", shortcut: `${modKey}+Shift+F`, run: () => projectSearch.show() },
+    { id: "nav.tags", title: "Find by Tag…", run: () => tagsPalette.show() },
+    { id: "file.dailyNote", title: "Open Today's Daily Note", run: () => {
+      void openDailyNote({
+        getRoot: () => currentFolderPath,
+        onOpen: (p) => openFileByPath(p),
+        onCreated: () => refreshVault(),
+      }).catch((e) => console.error("Daily note failed:", e));
+    } },
     { id: "edit.insertTable", title: "Insert Table…", run: () => tableEditor.show() },
+    { id: "edit.insertTemplate", title: "Insert from Template…", run: () => { void insertFromTemplate(); } },
+    { id: "edit.frontmatter", title: "Edit Frontmatter…", run: () => frontmatterEditor.show() },
+    { id: "file.exportHtml", title: "Export as HTML…", run: () => {
+      void exportHtml({
+        previewPane,
+        getTitle: () => tabManager.getActiveTab()?.filePath?.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "Document",
+      }).catch((e) => console.error("Export HTML failed:", e));
+    } },
+    { id: "file.exportPdf", title: "Export as PDF…", run: () => {
+      exportPdf({
+        previewPane,
+        getTitle: () => tabManager.getActiveTab()?.filePath?.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "Document",
+      });
+    } },
     { id: "app.settings", title: "Open Settings…", run: () => modal.show() },
     { id: "app.checkUpdates", title: "Check for Updates", run: () => { void checkForUpdates(); } },
   ]);

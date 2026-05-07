@@ -126,6 +126,10 @@ export function createSettingsModal(
             <label for="setting-line-numbers">Line Numbers</label>
             <input type="checkbox" id="setting-line-numbers" ${current.showLineNumbers ? "checked" : ""} />
           </div>
+          <div class="settings-group settings-toggle-group">
+            <label for="setting-vim-mode">Vim Mode</label>
+            <input type="checkbox" id="setting-vim-mode" ${current.vimMode ? "checked" : ""} />
+          </div>
         </div>
 
         <div class="settings-section">
@@ -191,6 +195,7 @@ export function createSettingsModal(
   const closeBtn = overlay.querySelector("#settings-close") as HTMLButtonElement;
   const lineNumbersCheckbox = overlay.querySelector("#setting-line-numbers") as HTMLInputElement;
   const tocCheckbox = overlay.querySelector("#setting-toc") as HTMLInputElement;
+  const vimModeCheckbox = overlay.querySelector("#setting-vim-mode") as HTMLInputElement;
 
   const csEditorFont = overlay.querySelector("#cs-editor-font") as HTMLElement;
   const csPreviewFont = overlay.querySelector("#cs-preview-font") as HTMLElement;
@@ -300,6 +305,12 @@ export function createSettingsModal(
     emit();
   });
 
+  // ── Vim mode toggle ──
+  vimModeCheckbox.addEventListener("change", () => {
+    current.vimMode = vimModeCheckbox.checked;
+    emit();
+  });
+
   // ── Close ──
   closeBtn.addEventListener("click", () => {
     overlay.classList.remove("visible");
@@ -354,6 +365,7 @@ export function createSettingsModal(
 
       // Line numbers
       lineNumbersCheckbox.checked = settings.showLineNumbers;
+      vimModeCheckbox.checked = settings.vimMode;
 
       // TOC
       tocCheckbox.checked = settings.showToc;

@@ -12,6 +12,7 @@ import { EditorState, StateField, Compartment, Prec, RangeSetBuilder, StateEffec
 import { LanguageDescription } from "@codemirror/language";
 import { openSearchPanel } from "@codemirror/search";
 import { wikiLinkAutocomplete } from "./wiki-autocomplete";
+import { vim } from "@replit/codemirror-vim";
 /** Languages available inside Markdown fenced code blocks.
  *  Each entry dynamic-imports its grammar only when the fenced block's lang is matched,
  *  so unused grammars don't bloat the initial bundle. */
@@ -331,6 +332,7 @@ async function loadLanguageForFile(filePath: string | null): Promise<Extension> 
 const themeCompartment = new Compartment();
 const fontCompartment = new Compartment();
 const languageCompartment = new Compartment();
+const keymapCompartment = new Compartment();
 
 /* ── Module-level state for reapplyStyle ── */
 let sharedExtensions: Extension[] | null = null;
@@ -373,6 +375,9 @@ export function createEditor(
   ]);
 
   sharedExtensions = [
+    // Vim must come BEFORE basicSetup so its keybindings win where they
+    // overlap; the compartment makes it toggleable at runtime.
+    keymapCompartment.of([]),
     basicSetup,
     replaceKeymap,
     wikiLinkAutocomplete,
@@ -456,6 +461,10 @@ export function setLineNumbers(view: EditorView, show: boolean): void {
   if (gutters) {
     gutters.style.display = show ? "" : "none";
   }
+}
+
+export function setVimMode(view: EditorView, enabled: boolean): void {
+  view.dispatch({ effects: keymapCompartment.reconfigure(enabled ? [vim()] : []) });
 }
 
 /**
