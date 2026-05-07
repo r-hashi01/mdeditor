@@ -17,7 +17,6 @@ import { createAiPane } from "./ai-pane";
 import { createCommandPalette, type Command } from "./command-palette";
 import { createQuickOpen } from "./quick-open";
 import { createProjectSearch } from "./project-search";
-import { createBacklinksPanel } from "./backlinks-panel";
 import { rebuildVault, clearVault, newNotePathForTarget } from "./vault";
 import { invoke } from "@tauri-apps/api/core";
 import { EditorView } from "@codemirror/view";
@@ -247,8 +246,6 @@ async function init(): Promise<void> {
       } else {
         fileTree.setSelectedFile(null);
       }
-      // Update backlinks panel — only meaningful when a folder is open.
-      backlinksPanel.setActiveFile(tab.filePath ?? null);
     },
     onAllTabsClosed: () => {
       // Clear stale editor content when all tabs are closed, but stay in
@@ -485,20 +482,10 @@ async function init(): Promise<void> {
     },
   });
 
-  // ── Backlinks panel (P0-6) ──
-  const backlinksPanel = createBacklinksPanel({
-    onPick: async (path, line) => {
-      await openFileByPath(path);
-      requestAnimationFrame(() => jumpToLine(line));
-    },
-  });
-  backlinksPanel.mount(document.getElementById("backlinks-pane")!);
-
-  /** Rebuild the vault index and refresh dependent UI (preview, panel). */
+  /** Rebuild the vault index and refresh the preview so wiki links resolve. */
   async function refreshVault(): Promise<void> {
     if (!currentFolderPath) {
       clearVault();
-      backlinksPanel.setActiveFile(null);
       return;
     }
     try {
@@ -506,12 +493,10 @@ async function init(): Promise<void> {
     } catch (e) {
       console.warn("Vault rebuild failed:", e);
     }
-    // Re-render preview so newly-resolved wiki links update.
     const activeTab = tabManager.getActiveTab();
     if (activeTab) {
       const content = activeTab.editorState.doc.toString();
       renderPreview(previewPane, content, activeTab.filePath, currentSettings.showToc);
-      backlinksPanel.setActiveFile(activeTab.filePath ?? null);
     }
   }
 
@@ -562,7 +547,6 @@ async function init(): Promise<void> {
     { id: "view.preview", title: "View: Preview Only", shortcut: `${modKey}+3`, run: () => { setViewMode("preview"); markdownViewMode = "preview"; } },
     { id: "view.toggleSidebar", title: "Toggle File Tree", shortcut: `${modKey}+B`, run: () => { fileTree.toggle(); folderBtn.classList.toggle("active", fileTree.isVisible()); } },
     { id: "view.toggleAi", title: "Toggle AI Pane", shortcut: `${modKey}+J`, run: () => { const v = aiPane.toggle(); aiPaneBtn.classList.toggle("active", v); } },
-    { id: "view.toggleBacklinks", title: "Toggle Backlinks Panel", shortcut: `${modKey}+Shift+B`, run: () => { backlinksPanel.toggle(); backlinksPanel.setActiveFile(tabManager.getActiveTab()?.filePath ?? null); } },
     { id: "nav.quickOpen", title: "Go to File…", shortcut: `${modKey}+P`, run: () => quickOpen.show() },
     { id: "nav.projectSearch", title: "Search in Project…", shortcut: `${modKey}+Shift+F`, run: () => projectSearch.show() },
     { id: "edit.insertTable", title: "Insert Table…", run: () => tableEditor.show() },
@@ -737,15 +721,10 @@ async function init(): Promise<void> {
       e.preventDefault();
       tabManager.closeActiveTab();
     }
-    if (mod && (e.key === "b" || e.key === "B")) {
+    if (mod && !e.shiftKey && (e.key === "b" || e.key === "B")) {
       e.preventDefault();
-      if (e.shiftKey) {
-        backlinksPanel.toggle();
-        backlinksPanel.setActiveFile(tabManager.getActiveTab()?.filePath ?? null);
-      } else {
-        fileTree.toggle();
-        folderBtn.classList.toggle("active", fileTree.isVisible());
-      }
+      fileTree.toggle();
+      folderBtn.classList.toggle("active", fileTree.isVisible());
     }
     if (mod && e.key === "j") {
       e.preventDefault();
