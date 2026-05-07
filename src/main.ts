@@ -18,6 +18,7 @@ import { createCommandPalette, type Command } from "./command-palette";
 import { createQuickOpen } from "./quick-open";
 import { createProjectSearch } from "./project-search";
 import { rebuildVault, clearVault, newNotePathForTarget } from "./vault";
+import { createOutlinePanel } from "./outline-panel";
 import { invoke } from "@tauri-apps/api/core";
 import { EditorView } from "@codemirror/view";
 import { undo, redo } from "@codemirror/commands";
@@ -135,6 +136,13 @@ async function init(): Promise<void> {
     if (maxScroll > 0) previewPane.scrollTop = ratio * maxScroll;
   }
 
+  /** Debounce token for outline rebuilds — avoids re-parsing on every keystroke. */
+  let outlineTimer: ReturnType<typeof setTimeout> | null = null;
+  function scheduleOutlineRebuild(content: string): void {
+    if (outlineTimer) clearTimeout(outlineTimer);
+    outlineTimer = setTimeout(() => outlinePanel.setSource(content), 200);
+  }
+
   const editor = createEditor(
     document.getElementById("editor-pane")!,
     (content) => {
@@ -142,6 +150,7 @@ async function init(): Promise<void> {
       const activeTab = tabManager.getActiveTab();
       renderPreview(previewPane, content, activeTab?.filePath ?? null, currentSettings.showToc);
       tabManager.updateDirtyState(content);
+      scheduleOutlineRebuild(content);
     },
     syncPreviewScroll,
     getCodemirrorTheme(preset),
@@ -166,6 +175,7 @@ async function init(): Promise<void> {
     const line = editor.state.doc.lineAt(pos);
     const col = pos - line.from + 1;
     statusCursor.textContent = `${line.number}:${col}`;
+    outlinePanel.setCursorLine(line.number);
   }
   editor.dom.addEventListener("keyup", updateStatusCursor);
   editor.dom.addEventListener("mouseup", updateStatusCursor);
@@ -222,6 +232,22 @@ async function init(): Promise<void> {
   );
   fileTree.mount(sidebar);
 
+  // ── Outline panel (P0-7) ──
+  // Mounted as a sibling of file-tree inside the sidebar. file-tree only
+  // wipes its own rootEl on openFolder so this stays intact.
+  const outlinePanel = createOutlinePanel({
+    onPick: (line) => {
+      const doc = editor.state.doc;
+      const target = doc.line(Math.max(1, Math.min(doc.lines, line)));
+      editor.dispatch({
+        selection: { anchor: target.from },
+        effects: EditorView.scrollIntoView(target.from, { y: "center" }),
+      });
+      editor.focus();
+    },
+  });
+  outlinePanel.mount(sidebar);
+
   // ── Tab Manager ──
   const tabManager = createTabManager(editor, {
     onTabSwitch: (tab) => {
@@ -236,6 +262,8 @@ async function init(): Promise<void> {
       // Update preview (only meaningful for markdown, but harmless for others)
       const content = tab.editorState.doc.toString();
       renderPreview(previewPane, content, tab.filePath, currentSettings.showToc);
+      // Sync outline to the new doc.
+      outlinePanel.setSource(content);
       // Update filename + status bar
       filenameEl.textContent = tab.filePath ? basename(tab.filePath) : "Untitled";
       updateStatusFiletype(tab.filePath);
@@ -546,6 +574,7 @@ async function init(): Promise<void> {
     { id: "view.split", title: "View: Split", shortcut: `${modKey}+2`, run: () => { setViewMode("split"); markdownViewMode = "split"; } },
     { id: "view.preview", title: "View: Preview Only", shortcut: `${modKey}+3`, run: () => { setViewMode("preview"); markdownViewMode = "preview"; } },
     { id: "view.toggleSidebar", title: "Toggle File Tree", shortcut: `${modKey}+B`, run: () => { fileTree.toggle(); folderBtn.classList.toggle("active", fileTree.isVisible()); } },
+    { id: "view.toggleOutline", title: "Toggle Outline", run: () => outlinePanel.toggle() },
     { id: "view.toggleAi", title: "Toggle AI Pane", shortcut: `${modKey}+J`, run: () => { const v = aiPane.toggle(); aiPaneBtn.classList.toggle("active", v); } },
     { id: "nav.quickOpen", title: "Go to File…", shortcut: `${modKey}+P`, run: () => quickOpen.show() },
     { id: "nav.projectSearch", title: "Search in Project…", shortcut: `${modKey}+Shift+F`, run: () => projectSearch.show() },
